@@ -22,12 +22,12 @@ pub enum TranspileError {
 impl TranspileError {
     pub fn code(&self) -> &'static str {
         match self {
-            Self::DuplicateConst(_)    => "E0002",
-            Self::UnsupportedType(_)   => "E0003",
-            Self::UnknownVariable(_)   => "E0004",
+            Self::DuplicateConst(_) => "E0002",
+            Self::UnsupportedType(_) => "E0003",
+            Self::UnknownVariable(_) => "E0004",
             Self::UnsupportedSyntax(_) => "E0005",
-            Self::MissingReprAttr(_)   => "E0006",
-            Self::ParseError(_)        => "E0007",
+            Self::MissingReprAttr(_) => "E0006",
+            Self::ParseError(_) => "E0007",
         }
     }
 }

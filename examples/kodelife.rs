@@ -1,10 +1,4 @@
-fn pixel(
-    uv: Point,
-    resolution: Point,
-    time: f32,
-    mouse: Point,
-    spectrum: Color,
-) -> Color {
+fn pixel(uv: Point, resolution: Point, time: f32, mouse: Point, spectrum: Color) -> Color {
     Color {
         r: abs(sin(cos(time + 3.0 * uv.y) * 2.0 * uv.x + time)),
         g: abs(cos(sin(time + 2.0 * uv.x) * 3.0 * uv.y + time)),
@@ -23,7 +17,6 @@ static mouse: Vec2 = vec2();
 
 #[builtin(spectrum)]
 static spectrum: Vec3 = vec3();
-
 
 // KodeLife 側で inData.v_texcoord を builtin として読む想定
 #[builtin(inData.v_texcoord)]

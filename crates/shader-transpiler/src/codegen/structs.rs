@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use crate::errors::TranspileError;
 use crate::types::GlslType;
+use std::collections::HashMap;
 
 pub(super) struct StructDef {
     pub(super) glsl_type: GlslType,
@@ -20,13 +20,16 @@ pub(super) fn parse_struct(item: &syn::ItemStruct) -> Result<(String, StructDef)
 fn parse_repr_attr(item: &syn::ItemStruct) -> Result<GlslType, TranspileError> {
     for attr in &item.attrs {
         if attr.path().is_ident("repr") {
-            let ident: syn::Ident = attr.parse_args()
+            let ident: syn::Ident = attr
+                .parse_args()
                 .map_err(|_| TranspileError::UnsupportedSyntax("#[repr] requires a type name"))?;
             return match ident.to_string().as_str() {
                 "vec2" => Ok(GlslType::Vec2),
                 "vec3" => Ok(GlslType::Vec3),
                 "vec4" => Ok(GlslType::Vec4),
-                _ => Err(TranspileError::UnsupportedSyntax("#[repr] must be vec2, vec3, or vec4")),
+                _ => Err(TranspileError::UnsupportedSyntax(
+                    "#[repr] must be vec2, vec3, or vec4",
+                )),
             };
         }
     }
@@ -35,13 +38,17 @@ fn parse_repr_attr(item: &syn::ItemStruct) -> Result<GlslType, TranspileError> {
 
 fn parse_fields(item: &syn::ItemStruct) -> Result<HashMap<String, usize>, TranspileError> {
     let syn::Fields::Named(named) = &item.fields else {
-        return Err(TranspileError::UnsupportedSyntax("struct must have named fields"));
+        return Err(TranspileError::UnsupportedSyntax(
+            "struct must have named fields",
+        ));
     };
 
     let mut fields = HashMap::new();
     for (decl_idx, field) in named.named.iter().enumerate() {
         if !is_f32(&field.ty) {
-            return Err(TranspileError::UnsupportedSyntax("struct fields must be f32"));
+            return Err(TranspileError::UnsupportedSyntax(
+                "struct fields must be f32",
+            ));
         }
         let field_name = field.ident.as_ref().unwrap().to_string();
         let component = parse_component_attr(field).unwrap_or(decl_idx);
@@ -70,6 +77,8 @@ pub(super) fn component_to_swizzle(index: usize) -> Result<&'static str, Transpi
         1 => Ok("y"),
         2 => Ok("z"),
         3 => Ok("w"),
-        _ => Err(TranspileError::UnsupportedSyntax("component index out of range (max 3)")),
+        _ => Err(TranspileError::UnsupportedSyntax(
+            "component index out of range (max 3)",
+        )),
     }
 }

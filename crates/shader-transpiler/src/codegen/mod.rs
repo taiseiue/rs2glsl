@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use syn::{File, Item};
 use crate::errors::TranspileError;
 use crate::types::GlslType;
+use std::collections::HashMap;
+use syn::{File, Item};
 
 mod expr;
 mod item;
@@ -28,7 +28,11 @@ fn find_builtin_attr(attrs: &[syn::Attribute]) -> Result<Option<String>, Transpi
             let parts = attr.parse_args_with(
                 syn::punctuated::Punctuated::<syn::Ident, syn::Token![.]>::parse_separated_nonempty
             ).map_err(|_| TranspileError::UnsupportedSyntax("#[builtin] requires a GLSL name: #[builtin(iResolution)]"))?;
-            let name = parts.into_iter().map(|i| i.to_string()).collect::<Vec<_>>().join(".");
+            let name = parts
+                .into_iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(".");
             return Ok(Some(name));
         }
     }
@@ -87,7 +91,8 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
             if global_env.contains_key(&name) {
                 return Err(TranspileError::DuplicateConst(name));
             }
-            let (glsl, ty) = item::generate_const(c, &global_env, &registry, &aliases, &func_registry)?;
+            let (glsl, ty) =
+                item::generate_const(c, &global_env, &registry, &aliases, &func_registry)?;
             global_env.insert(name, ty);
             out.push_str(&glsl);
         }
@@ -105,7 +110,14 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
                     out.push_str("\n\n");
                 }
             }
-            out.push_str(&item::generate_function(func, &name, &global_env, &registry, &aliases, &func_registry)?);
+            out.push_str(&item::generate_function(
+                func,
+                &name,
+                &global_env,
+                &registry,
+                &aliases,
+                &func_registry,
+            )?);
         }
     }
 

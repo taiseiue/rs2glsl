@@ -17,6 +17,14 @@ struct Uv {
 }
 
 fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
-    let uv = Uv { s: frag_coord.x / resolution.x, t: frag_coord.y / resolution.y };
-    Color { r: uv.s, g: uv.t, b: sin(time), a: 1.0 }
+    let uv = Uv {
+        s: frag_coord.x / resolution.x,
+        t: frag_coord.y / resolution.y,
+    };
+    Color {
+        r: uv.s,
+        g: uv.t,
+        b: sin(time),
+        a: 1.0,
+    }
 }

@@ -87,14 +87,15 @@ fn pixel(frag_coord: Point, resolution: Point, time: f32) -> Color {
         0.30,
     );
 
-    let ring_mask = 1.0 - circle(
-        uv,
-        Point {
-            x: planet_center.x,
-            y: planet_center.y,
-        },
-        0.18,
-    );
+    let ring_mask = 1.0
+        - circle(
+            uv,
+            Point {
+                x: planet_center.x,
+                y: planet_center.y,
+            },
+            0.18,
+        );
 
     let saturn_ring = ring_shape * ring_mask;
 
@@ -117,10 +118,7 @@ fn pixel(frag_coord: Point, resolution: Point, time: f32) -> Color {
             x: comet_x + 0.15,
             y: comet_y + 0.05,
         },
-        Point {
-            x: 0.18,
-            y: 0.015,
-        },
+        Point { x: 0.18, y: 0.015 },
     );
 
     // ロケット本体
@@ -129,11 +127,7 @@ fn pixel(frag_coord: Point, resolution: Point, time: f32) -> Color {
         y: -0.35 + 0.08 * sin(t * 2.0),
     };
 
-    let ship_body = rect(
-        uv,
-        ship_center,
-        Point { x: 0.06, y: 0.16 },
-    );
+    let ship_body = rect(uv, ship_center, Point { x: 0.06, y: 0.16 });
 
     let ship_nose = rect(
         uv,
@@ -255,4 +249,3 @@ fn mainImage(frag_color: &mut Vec4, frag_coord: Vec2) {
 
     *frag_color = vec4(col.r, col.g, col.b, 1.0);
 }
-

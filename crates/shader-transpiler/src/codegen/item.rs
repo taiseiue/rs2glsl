@@ -1,10 +1,10 @@
-use crate::errors::TranspileError;
-use crate::types::GlslType;
-use super::{Tail, TypeEnv, TypeAliasMap, FuncRegistry};
-use super::structs::StructRegistry;
 use super::expr::{extract_ident, generate_expr};
 use super::stmt::generate_block;
-use super::ty::{parse_type, parse_param_type};
+use super::structs::StructRegistry;
+use super::ty::{parse_param_type, parse_type};
+use super::{FuncRegistry, Tail, TypeAliasMap, TypeEnv};
+use crate::errors::TranspileError;
+use crate::types::GlslType;
 
 pub(super) fn generate_const(
     item: &syn::ItemConst,
@@ -29,21 +29,30 @@ pub(super) fn generate_function(
 ) -> Result<String, TranspileError> {
     let mut env = global_env.clone();
 
-    let args = func.sig.inputs.iter().map(|arg| -> Result<String, TranspileError> {
-        match arg {
-            syn::FnArg::Typed(pat) => {
-                let param_name = extract_ident(&pat.pat)?;
-                let (ty, is_out) = parse_param_type(&pat.ty, registry, aliases)?;
-                env.insert(param_name.clone(), ty.clone());
-                let qualifier = if is_out { "out " } else { "" };
-                Ok(format!("{qualifier}{} {param_name}", ty.to_glsl()))
+    let args = func
+        .sig
+        .inputs
+        .iter()
+        .map(|arg| -> Result<String, TranspileError> {
+            match arg {
+                syn::FnArg::Typed(pat) => {
+                    let param_name = extract_ident(&pat.pat)?;
+                    let (ty, is_out) = parse_param_type(&pat.ty, registry, aliases)?;
+                    env.insert(param_name.clone(), ty.clone());
+                    let qualifier = if is_out { "out " } else { "" };
+                    Ok(format!("{qualifier}{} {param_name}", ty.to_glsl()))
+                }
+                _ => Err(TranspileError::UnsupportedSyntax("self argument")),
             }
-            _ => Err(TranspileError::UnsupportedSyntax("self argument")),
-        }
-    }).collect::<Result<Vec<_>, _>>()?.join(", ");
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
 
     let (ret, tail) = match &func.sig.output {
-        syn::ReturnType::Type(_, ty) => (parse_type(ty, registry, aliases)?.to_glsl().to_string(), Tail::Return),
+        syn::ReturnType::Type(_, ty) => (
+            parse_type(ty, registry, aliases)?.to_glsl().to_string(),
+            Tail::Return,
+        ),
         syn::ReturnType::Default => ("void".to_string(), Tail::Discard),
     };
 

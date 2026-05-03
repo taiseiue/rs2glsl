@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use super::structs::{StructRegistry, component_to_swizzle};
+use super::ty;
+use super::{FuncRegistry, TypeEnv};
 use crate::errors::TranspileError;
 use crate::types::GlslType;
-use super::{TypeEnv, FuncRegistry};
-use super::structs::{component_to_swizzle, StructRegistry};
-use super::ty;
+use std::collections::HashMap;
 
 pub(super) fn generate_expr(
     expr: &syn::Expr,
@@ -16,18 +16,18 @@ pub(super) fn generate_expr(
             let (left, left_ty) = generate_expr(&bin.left, env, registry, func_registry)?;
             let (right, right_ty) = generate_expr(&bin.right, env, registry, func_registry)?;
             let (op, out_ty) = match &bin.op {
-                syn::BinOp::Add(_) => ("+",  ty::infer_binop_type(&left_ty, &right_ty)),
-                syn::BinOp::Sub(_) => ("-",  ty::infer_binop_type(&left_ty, &right_ty)),
-                syn::BinOp::Mul(_) => ("*",  ty::infer_binop_type(&left_ty, &right_ty)),
-                syn::BinOp::Div(_) => ("/",  ty::infer_binop_type(&left_ty, &right_ty)),
-                syn::BinOp::Eq(_)  => ("==", GlslType::Bool),
-                syn::BinOp::Ne(_)  => ("!=", GlslType::Bool),
-                syn::BinOp::Lt(_)  => ("<",  GlslType::Bool),
-                syn::BinOp::Gt(_)  => (">",  GlslType::Bool),
-                syn::BinOp::Le(_)  => ("<=", GlslType::Bool),
-                syn::BinOp::Ge(_)  => (">=", GlslType::Bool),
+                syn::BinOp::Add(_) => ("+", ty::infer_binop_type(&left_ty, &right_ty)),
+                syn::BinOp::Sub(_) => ("-", ty::infer_binop_type(&left_ty, &right_ty)),
+                syn::BinOp::Mul(_) => ("*", ty::infer_binop_type(&left_ty, &right_ty)),
+                syn::BinOp::Div(_) => ("/", ty::infer_binop_type(&left_ty, &right_ty)),
+                syn::BinOp::Eq(_) => ("==", GlslType::Bool),
+                syn::BinOp::Ne(_) => ("!=", GlslType::Bool),
+                syn::BinOp::Lt(_) => ("<", GlslType::Bool),
+                syn::BinOp::Gt(_) => (">", GlslType::Bool),
+                syn::BinOp::Le(_) => ("<=", GlslType::Bool),
+                syn::BinOp::Ge(_) => (">=", GlslType::Bool),
                 syn::BinOp::And(_) => ("&&", GlslType::Bool),
-                syn::BinOp::Or(_)  => ("||", GlslType::Bool),
+                syn::BinOp::Or(_) => ("||", GlslType::Bool),
                 _ => return Err(TranspileError::UnsupportedSyntax("binary operator")),
             };
             Ok((format!("({left} {op} {right})"), out_ty))
@@ -39,7 +39,9 @@ pub(super) fn generate_expr(
                 _ => return Err(TranspileError::UnsupportedSyntax("non-path function call")),
             };
 
-            let args_and_types = call.args.iter()
+            let args_and_types = call
+                .args
+                .iter()
                 .map(|a| generate_expr(a, env, registry, func_registry))
                 .collect::<Result<Vec<_>, _>>()?;
             let (arg_strs, arg_types): (Vec<_>, Vec<_>) = args_and_types.into_iter().unzip();
@@ -50,15 +52,22 @@ pub(super) fn generate_expr(
 
         syn::Expr::Struct(s) => {
             let struct_name = s.path.segments.last().unwrap().ident.to_string();
-            let def = registry.get(&struct_name)
-                .ok_or(TranspileError::UnsupportedSyntax("unknown struct in struct literal"))?;
+            let def = registry
+                .get(&struct_name)
+                .ok_or(TranspileError::UnsupportedSyntax(
+                    "unknown struct in struct literal",
+                ))?;
 
             // フィールド名から式のマップ
             let mut field_exprs: HashMap<String, String> = HashMap::new();
             for fv in &s.fields {
                 let fname = match &fv.member {
                     syn::Member::Named(id) => id.to_string(),
-                    _ => return Err(TranspileError::UnsupportedSyntax("unnamed field in struct literal")),
+                    _ => {
+                        return Err(TranspileError::UnsupportedSyntax(
+                            "unnamed field in struct literal",
+                        ));
+                    }
                 };
                 let (expr_str, _) = generate_expr(&fv.expr, env, registry, func_registry)?;
                 field_exprs.insert(fname, expr_str);
@@ -68,14 +77,24 @@ pub(super) fn generate_expr(
             let mut components: Vec<Option<String>> = vec![None; n];
             for (fname, &comp_idx) in &def.fields {
                 if comp_idx >= n {
-                    return Err(TranspileError::UnsupportedSyntax("component index out of range"));
+                    return Err(TranspileError::UnsupportedSyntax(
+                        "component index out of range",
+                    ));
                 }
-                let expr = field_exprs.get(fname)
-                    .ok_or(TranspileError::UnsupportedSyntax("missing field in struct literal"))?;
+                let expr = field_exprs
+                    .get(fname)
+                    .ok_or(TranspileError::UnsupportedSyntax(
+                        "missing field in struct literal",
+                    ))?;
                 components[comp_idx] = Some(expr.clone());
             }
-            let args = components.into_iter()
-                .map(|c| c.ok_or(TranspileError::UnsupportedSyntax("incomplete struct literal")))
+            let args = components
+                .into_iter()
+                .map(|c| {
+                    c.ok_or(TranspileError::UnsupportedSyntax(
+                        "incomplete struct literal",
+                    ))
+                })
                 .collect::<Result<Vec<_>, _>>()?;
 
             let constructor = def.glsl_type.to_glsl();
@@ -91,9 +110,12 @@ pub(super) fn generate_expr(
             };
 
             if let GlslType::Struct(struct_name, _) = &base_ty {
-                let def = registry.get(struct_name.as_str())
+                let def = registry
+                    .get(struct_name.as_str())
                     .ok_or(TranspileError::UnsupportedSyntax("unknown struct type"))?;
-                let comp_idx = def.fields.get(&member)
+                let comp_idx = def
+                    .fields
+                    .get(&member)
                     .ok_or(TranspileError::UnsupportedSyntax("unknown struct field"))?;
                 let swizzle = component_to_swizzle(*comp_idx)?;
                 Ok((format!("{base}.{swizzle}"), GlslType::Float))
@@ -105,7 +127,8 @@ pub(super) fn generate_expr(
 
         syn::Expr::Path(p) => {
             let var_name = p.path.segments.last().unwrap().ident.to_string();
-            let ty = env.get(&var_name)
+            let ty = env
+                .get(&var_name)
                 .ok_or_else(|| TranspileError::UnknownVariable(var_name.clone()))?
                 .clone();
             // ビルトイン変数はRust名の代わりにGLSL名をemitする
@@ -129,8 +152,8 @@ pub(super) fn generate_expr(
         syn::Expr::Unary(u) => {
             let (inner, inner_ty) = generate_expr(&u.expr, env, registry, func_registry)?;
             match &u.op {
-                syn::UnOp::Neg(_)  => Ok((format!("(-{inner})"), inner_ty)),
-                syn::UnOp::Not(_)  => Ok((format!("(!{inner})"), GlslType::Bool)),
+                syn::UnOp::Neg(_) => Ok((format!("(-{inner})"), inner_ty)),
+                syn::UnOp::Not(_) => Ok((format!("(!{inner})"), GlslType::Bool)),
                 syn::UnOp::Deref(_) => Ok((inner, inner_ty)), // *x → x（deref を透過）
                 _ => Err(TranspileError::UnsupportedSyntax("unary operator")),
             }
@@ -138,8 +161,8 @@ pub(super) fn generate_expr(
 
         syn::Expr::Lit(lit) => match &lit.lit {
             syn::Lit::Float(f) => Ok((f.to_string(), GlslType::Float)),
-            syn::Lit::Int(i)   => Ok((format!("{}.0", i), GlslType::Float)),
-            syn::Lit::Bool(b)  => Ok((b.value.to_string(), GlslType::Bool)),
+            syn::Lit::Int(i) => Ok((i.to_string(), GlslType::Int)),
+            syn::Lit::Bool(b) => Ok((b.value.to_string(), GlslType::Bool)),
             _ => Err(TranspileError::UnsupportedSyntax("literal kind")),
         },
 

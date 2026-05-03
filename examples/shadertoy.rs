@@ -1,7 +1,11 @@
 // この関数がユーザーコード
 fn pixel(uv: Point, time: f32) -> Color {
     let c = 0.5 + 0.5 * cos(time + uv.x + 0.0);
-    Color { r: c, g: uv.y, b: 1.0 }
+    Color {
+        r: c,
+        g: uv.y,
+        b: 1.0,
+    }
 }
 
 // これ以下はadapter

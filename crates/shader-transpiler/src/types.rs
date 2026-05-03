@@ -1,6 +1,7 @@
 #[derive(Clone, Debug, PartialEq)]
 pub enum GlslType {
     Bool,
+    Int,
     Float,
     Vec2,
     Vec3,
@@ -13,6 +14,7 @@ impl GlslType {
     pub fn to_glsl(&self) -> &str {
         match self {
             GlslType::Bool => "bool",
+            GlslType::Int => "int",
             GlslType::Float => "float",
             GlslType::Vec2 => "vec2",
             GlslType::Vec3 => "vec3",
