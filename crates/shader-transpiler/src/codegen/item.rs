@@ -41,12 +41,12 @@ pub(super) fn generate_function(
         }
     }).collect::<Result<Vec<_>, _>>()?.join(", ");
 
-    let ret = match &func.sig.output {
-        syn::ReturnType::Type(_, ty) => parse_type(ty, registry, aliases)?.to_glsl().to_string(),
-        syn::ReturnType::Default => "void".to_string(),
+    let (ret, tail) = match &func.sig.output {
+        syn::ReturnType::Type(_, ty) => (parse_type(ty, registry, aliases)?.to_glsl().to_string(), Tail::Return),
+        syn::ReturnType::Default => ("void".to_string(), Tail::Discard),
     };
 
-    let body = generate_block(&func.block, &mut env, registry, func_registry, Tail::Return)?;
+    let body = generate_block(&func.block, &mut env, registry, func_registry, tail)?;
 
-    Ok(format!("{ret} {glsl_name}({args}) {{\n{body}\n}}"))
+    Ok(format!("{ret} {glsl_name}({args}) {{\n{body}}}"))
 }

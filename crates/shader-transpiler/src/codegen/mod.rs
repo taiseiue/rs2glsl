@@ -40,16 +40,15 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
         }
     }
 
-    // 関数シグネチャ
+    // 関数シグネチャ (void 関数は登録しない)
     let mut func_registry = FuncRegistry::new();
     for node in &file.items {
         if let Item::Fn(func) = node {
-            let fn_name = func.sig.ident.to_string();
-            let ret_ty = match &func.sig.output {
-                syn::ReturnType::Type(_, t) => ty::parse_type(t, &registry, &aliases)?,
-                syn::ReturnType::Default => GlslType::Float,
-            };
-            func_registry.insert(fn_name, ret_ty);
+            if let syn::ReturnType::Type(_, t) = &func.sig.output {
+                let fn_name = func.sig.ident.to_string();
+                let ret_ty = ty::parse_type(t, &registry, &aliases)?;
+                func_registry.insert(fn_name, ret_ty);
+            }
         }
     }
 
@@ -77,7 +76,12 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
                 found_main = true;
             }
             if !out.is_empty() {
-                out.push('\n');
+                // 直前が \n で終わっていれば1つ追加、そうでなければ2つ追加して空行を確保
+                if out.ends_with('\n') {
+                    out.push('\n');
+                } else {
+                    out.push_str("\n\n");
+                }
             }
             out.push_str(&item::generate_function(func, &name, &global_env, &registry, &aliases, &func_registry)?);
         }

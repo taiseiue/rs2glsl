@@ -6,6 +6,147 @@ pub use errors::TranspileError;
 
 pub fn transpile_to_glsl(source: &str) -> Result<String, TranspileError> {
     let file = syn::parse_file(source)
-        .map_err(|_| TranspileError::UnsupportedSyntax("Rust syntax error"))?;
+        .map_err(|e| TranspileError::ParseError(e.to_string()))?;
     codegen::generate(&file)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn glsl(src: &str) -> String {
+        transpile_to_glsl(src).expect("transpile failed")
+    }
+
+    // ── 正常系 ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn simple_function() {
+        let out = glsl("fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 { vec4(1.0, 0.0, 0.0, 1.0) }");
+        assert_eq!(out, "vec4 main_image(vec2 frag_coord, vec2 resolution, float time) {\nreturn vec4(1.0, 0.0, 0.0, 1.0);\n}");
+    }
+
+    #[test]
+    fn let_binding_infers_type() {
+        let out = glsl("fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 { let uv = frag_coord / resolution; vec4(uv.x, uv.y, 0.0, 1.0) }");
+        assert!(out.contains("vec2 uv = (frag_coord / resolution);"));
+        assert!(out.contains("return vec4(uv.x, uv.y, 0.0, 1.0);"));
+    }
+
+    #[test]
+    fn user_defined_helper_return_type_inferred() {
+        let out = glsl("\
+fn double(x: f32) -> f32 { x * 2.0 }
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 { vec4(double(time), 0.0, 0.0, 1.0) }");
+        // double の戻り値型が float として推論されること
+        assert!(out.contains("float double(float x)"));
+        // helper と main_image の間に空行が入ること
+        assert!(out.contains("}\n\nvec4 main_image"));
+        // 呼び出し側で double(time) の型が float と推論され vec4 の引数になること
+        assert!(out.contains("return vec4(double(time), 0.0, 0.0, 1.0);"));
+    }
+
+    #[test]
+    fn constant_emitted_before_function() {
+        let out = glsl("\
+const PI: f32 = 3.14159;
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 { vec4(PI, 0.0, 0.0, 1.0) }");
+        assert!(out.starts_with("const float PI = 3.14159;"));
+        assert!(out.contains("const float PI = 3.14159;\n\nvec4 main_image"));
+        assert!(out.contains("return vec4(PI, 0.0, 0.0, 1.0);"));
+    }
+
+    #[test]
+    fn type_alias_transparent_in_output() {
+        let out = glsl("\
+type Color = Vec4;
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Color { vec4(1.0, 0.0, 0.0, 1.0) }");
+        // 型エイリアス宣言は出力されず、戻り値は vec4 になる
+        assert!(!out.contains("Color"));
+        assert!(out.contains("vec4 main_image"));
+    }
+
+    #[test]
+    fn void_function_uses_discard_tail() {
+        let out = glsl("\
+fn noop() { sin(1.0) }
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 { vec4(1.0, 0.0, 0.0, 1.0) }");
+        // void 関数の末尾式は return なしで出力される
+        assert!(out.contains("void noop()"));
+        assert!(!out.contains("return sin(1.0)"));
+        assert!(out.contains("sin(1.0);"));
+    }
+
+    #[test]
+    fn if_expression_as_let_initializer() {
+        let out = glsl("\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let x = if time > 1.0 { 1.0 } else { 0.0 };
+    vec4(x, 0.0, 0.0, 1.0)
+}");
+        assert!(out.contains("float x;"));
+        assert!(out.contains("if ((time > 1.0))"));
+        assert!(out.contains("x = 1.0;"));
+        assert!(out.contains("x = 0.0;"));
+        assert!(out.contains("return vec4(x, 0.0, 0.0, 1.0);"));
+    }
+
+    #[test]
+    fn struct_maps_to_glsl_constructor() {
+        let out = glsl("\
+#[repr(vec4)]
+struct Color { r: f32, g: f32, b: f32, a: f32 }
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    Color { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+}");
+        assert!(out.contains("return vec4(1.0, 0.0, 0.0, 1.0);"));
+    }
+
+    #[test]
+    fn no_trailing_blank_line_inside_function() {
+        let out = glsl("fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 { vec4(1.0, 0.0, 0.0, 1.0) }");
+        // '}' の直前に空行がないこと
+        assert!(!out.contains("\n\n}"));
+    }
+
+    // ── エラー系 ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn error_main_image_not_found() {
+        let err = transpile_to_glsl("fn foo(x: f32) -> f32 { x }").unwrap_err();
+        assert!(matches!(err, TranspileError::MainImageNotFound));
+        assert_eq!(err.code(), "E0001");
+    }
+
+    #[test]
+    fn error_duplicate_const() {
+        let err = transpile_to_glsl("\
+const X: f32 = 1.0;
+const X: f32 = 2.0;
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 { vec4(1.0, 0.0, 0.0, 1.0) }")
+            .unwrap_err();
+        assert!(matches!(err, TranspileError::DuplicateConst(ref n) if n == "X"));
+        assert_eq!(err.code(), "E0002");
+    }
+
+    #[test]
+    fn error_unsupported_type() {
+        let err = transpile_to_glsl("fn main_image(frag_coord: Vec2, resolution: Vec2, time: UnknownType) -> Vec4 { vec4(1.0, 0.0, 0.0, 1.0) }").unwrap_err();
+        assert!(matches!(err, TranspileError::UnsupportedType(ref t) if t == "UnknownType"));
+        assert_eq!(err.code(), "E0003");
+    }
+
+    #[test]
+    fn error_unknown_variable() {
+        let err = transpile_to_glsl("fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 { ghost }").unwrap_err();
+        assert!(matches!(err, TranspileError::UnknownVariable(ref v) if v == "ghost"));
+        assert_eq!(err.code(), "E0004");
+    }
+
+    #[test]
+    fn error_parse_error() {
+        let err = transpile_to_glsl("this is not rust @@@").unwrap_err();
+        assert!(matches!(err, TranspileError::ParseError(_)));
+        assert_eq!(err.code(), "E0007");
+    }
 }

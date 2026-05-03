@@ -3,20 +3,23 @@ pub enum TranspileError {
     #[error("main_image function cannot be found")]
     MainImageNotFound,
 
+    #[error("Duplicate const: `{0}`")]
+    DuplicateConst(String),
+
     #[error("Unsupported type: `{0}`")]
     UnsupportedType(String),
 
-    #[error("Unsupported variable: `{0}`")]
+    #[error("Unknown variable: `{0}`")]
     UnknownVariable(String),
-
-    #[error("Duplicate const: `{0}`")]
-    DuplicateConst(String),
 
     #[error("Unsupported syntax: {0}")]
     UnsupportedSyntax(&'static str),
 
     #[error("struct `{0}` requires a #[repr(vec2|vec3|vec4)] attribute")]
     MissingReprAttr(String),
+
+    #[error("Parse error: {0}")]
+    ParseError(String),
 }
 
 impl TranspileError {
@@ -28,6 +31,7 @@ impl TranspileError {
             Self::UnknownVariable(_)   => "E0004",
             Self::UnsupportedSyntax(_) => "E0005",
             Self::MissingReprAttr(_)   => "E0006",
+            Self::ParseError(_)        => "E0007",
         }
     }
 }
