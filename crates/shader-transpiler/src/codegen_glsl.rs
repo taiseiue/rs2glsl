@@ -1,25 +1,30 @@
 use std::collections::HashMap;
 use syn::{File, Item};
+use crate::errors::TranspileError;
 use crate::types::GlslType;
 
 type TypeEnv = HashMap<String, GlslType>;
 
-// 末尾式をどう出力するか
+#[derive(Clone, Copy)]
 enum Tail<'a> {
-    Return,     
+    Return,
     Assign(&'a str),
     Discard,
 }
 
-pub fn generate(file: &File) -> Result<String, String> {
+pub fn generate(file: &File) -> Result<String, TranspileError> {
     let mut global_env = TypeEnv::new();
     let mut out = String::new();
 
     // 定数から処理する
     for item in &file.items {
         if let Item::Const(c) = item {
-            let (glsl, ty) = generate_const(c, &global_env);
-            global_env.insert(c.ident.to_string(), ty);
+            let name = c.ident.to_string();
+            if global_env.contains_key(&name) {
+                return Err(TranspileError::DuplicateConst(name));
+            }
+            let (glsl, ty) = generate_const(c, &global_env)?;
+            global_env.insert(name, ty);
             out.push_str(&glsl);
         }
     }
@@ -37,58 +42,58 @@ pub fn generate(file: &File) -> Result<String, String> {
         }
     }
 
-    Err("main_image not found".into())
+    Err(TranspileError::MainImageNotFound)
 }
 
-fn generate_const(item: &syn::ItemConst, env: &TypeEnv) -> (String, GlslType) {
+fn generate_const(item: &syn::ItemConst, env: &TypeEnv) -> Result<(String, GlslType), TranspileError> {
     let name = item.ident.to_string();
-    let ty = parse_type(&item.ty);
-    let (expr_str, _) = generate_expr(&item.expr, env);
-    (format!("const {} {name} = {expr_str};\n", ty.to_glsl()), ty)
+    let ty = parse_type(&item.ty)?;
+    let (expr_str, _) = generate_expr(&item.expr, env)?;
+    Ok((format!("const {} {name} = {expr_str};\n", ty.to_glsl()), ty))
 }
 
-fn generate_function(func: &syn::ItemFn, global_env: &TypeEnv) -> Result<String, String> {
+fn generate_function(func: &syn::ItemFn, global_env: &TypeEnv) -> Result<String, TranspileError> {
     let name = "mainImage";
     let mut env = global_env.clone();
 
-    let args = func.sig.inputs.iter().map(|arg| {
+    let args = func.sig.inputs.iter().map(|arg| -> Result<String, TranspileError> {
         match arg {
             syn::FnArg::Typed(pat) => {
-                let param_name = extract_ident(&pat.pat);
-                let ty = parse_type(&pat.ty);
+                let param_name = extract_ident(&pat.pat)?;
+                let ty = parse_type(&pat.ty)?;
                 env.insert(param_name.clone(), ty.clone());
-                format!("{} {param_name}", ty.to_glsl())
+                Ok(format!("{} {param_name}", ty.to_glsl()))
             }
-            _ => panic!("unsupported arg"),
+            _ => Err(TranspileError::UnsupportedSyntax("self 引数")),
         }
-    }).collect::<Vec<_>>().join(", ");
+    }).collect::<Result<Vec<_>, _>>()?.join(", ");
 
     let ret = match &func.sig.output {
-        syn::ReturnType::Type(_, ty) => parse_type(ty).to_glsl().to_string(),
+        syn::ReturnType::Type(_, ty) => parse_type(ty)?.to_glsl().to_string(),
         _ => "void".to_string(),
     };
 
-    let body = generate_block(&func.block, &mut env, Tail::Return);
+    let body = generate_block(&func.block, &mut env, Tail::Return)?;
 
     Ok(format!("{ret} {name}({args}) {{\n{body}\n}}"))
 }
 
-fn parse_type(ty: &syn::Type) -> GlslType {
+fn parse_type(ty: &syn::Type) -> Result<GlslType, TranspileError> {
     let ident = match ty {
         syn::Type::Path(p) => &p.path.segments.last().unwrap().ident,
-        _ => panic!("unsupported type"),
+        _ => return Err(TranspileError::UnsupportedSyntax("パス以外の型")),
     };
     match ident.to_string().as_str() {
-        "bool" => GlslType::Bool,
-        "f32" => GlslType::Float,
-        "Vec2" => GlslType::Vec2,
-        "Vec3" => GlslType::Vec3,
-        "Vec4" => GlslType::Vec4,
-        unknown => panic!("unknown type: {unknown}"),
+        "bool" => Ok(GlslType::Bool),
+        "f32"  => Ok(GlslType::Float),
+        "Vec2" => Ok(GlslType::Vec2),
+        "Vec3" => Ok(GlslType::Vec3),
+        "Vec4" => Ok(GlslType::Vec4),
+        unknown => Err(TranspileError::UnsupportedType(unknown.to_string())),
     }
 }
 
-fn generate_block(block: &syn::Block, env: &mut TypeEnv, tail: Tail<'_>) -> String {
+fn generate_block(block: &syn::Block, env: &mut TypeEnv, tail: Tail<'_>) -> Result<String, TranspileError> {
     let mut out = String::new();
     let stmts = &block.stmts;
 
@@ -97,17 +102,20 @@ fn generate_block(block: &syn::Block, env: &mut TypeEnv, tail: Tail<'_>) -> Stri
 
         match stmt {
             syn::Stmt::Local(local) => {
-                let name = extract_ident(&local.pat);
-                let init_expr = local.init.as_ref().unwrap().expr.as_ref();
+                let name = extract_ident(&local.pat)?;
+                let init_expr = local.init
+                    .as_ref()
+                    .ok_or(TranspileError::UnsupportedSyntax("let without an initializer"))?
+                    .expr
+                    .as_ref();
 
                 if let syn::Expr::If(if_expr) = init_expr {
-                    // 前置ifなのでif+代入に展開
-                    let ty = infer_block_tail_type(&if_expr.then_branch, env);
+                    let ty = infer_block_tail_type(&if_expr.then_branch, env)?;
                     env.insert(name.clone(), ty.clone());
                     out.push_str(&format!("{} {name};\n", ty.to_glsl()));
-                    out.push_str(&generate_if(if_expr, Tail::Assign(&name.clone()), env));
+                    out.push_str(&generate_if(if_expr, Tail::Assign(&name.clone()), env)?);
                 } else {
-                    let (expr_str, ty) = generate_expr(init_expr, env);
+                    let (expr_str, ty) = generate_expr(init_expr, env)?;
                     env.insert(name.clone(), ty.clone());
                     out.push_str(&format!("{} {name} = {expr_str};\n", ty.to_glsl()));
                 }
@@ -115,149 +123,130 @@ fn generate_block(block: &syn::Block, env: &mut TypeEnv, tail: Tail<'_>) -> Stri
 
             syn::Stmt::Expr(expr, semi) => {
                 if let syn::Expr::If(if_expr) = expr {
-                    // 普通のif文
-                    out.push_str(&generate_if(if_expr, Tail::Discard, env));
+                    out.push_str(&generate_if(if_expr, Tail::Discard, env)?);
                 } else if is_last && semi.is_none() {
-                    // 末尾式
-                    let (expr_str, _) = generate_expr(expr, env);
+                    let (expr_str, _) = generate_expr(expr, env)?;
                     let line = match tail {
-                        Tail::Return => format!("return {expr_str};\n"),
+                        Tail::Return       => format!("return {expr_str};\n"),
                         Tail::Assign(name) => format!("{name} = {expr_str};\n"),
-                        Tail::Discard => format!("{expr_str};\n"),
+                        Tail::Discard      => format!("{expr_str};\n"),
                     };
                     out.push_str(&line);
                 } else {
-                    // 末尾ではなくセミコロンでもない
-                    let (expr_str, _) = generate_expr(expr, env);
+                    let (expr_str, _) = generate_expr(expr, env)?;
                     out.push_str(&format!("{expr_str};\n"));
                 }
             }
 
-            _ => panic!("unsupported stmt"),
+            _ => return Err(TranspileError::UnsupportedSyntax("Types of sentences")),
         }
     }
 
-    out
+    Ok(out)
 }
 
-// if 式の then ブランチ末尾から型を推論する
-fn infer_block_tail_type(block: &syn::Block, env: &TypeEnv) -> GlslType {
+fn infer_block_tail_type(block: &syn::Block, env: &TypeEnv) -> Result<GlslType, TranspileError> {
     let tail = block.stmts.iter().last()
-        .unwrap_or_else(|| panic!("if branch must not be empty"));
+        .ok_or(TranspileError::UnsupportedSyntax("Empty if branch"))?;
     match tail {
-        syn::Stmt::Expr(expr, None) => generate_expr(expr, env).1,
-        _ => panic!("if branch must end with an expression"),
+        syn::Stmt::Expr(expr, None) => Ok(generate_expr(expr, env)?.1),
+        _ => Err(TranspileError::UnsupportedSyntax("The branches of an if expression must end with an expression.")),
     }
 }
 
-fn generate_if(if_expr: &syn::ExprIf, tail: Tail<'_>, env: &mut TypeEnv) -> String {
-    let (cond_str, _) = generate_expr(&if_expr.cond, env);
-    let then_body = generate_block(&if_expr.then_branch, env, match tail {
-        Tail::Return => Tail::Return,
-        Tail::Assign(n) => Tail::Assign(n),
-        Tail::Discard => Tail::Discard,
-    });
+fn generate_if(if_expr: &syn::ExprIf, tail: Tail<'_>, env: &mut TypeEnv) -> Result<String, TranspileError> {
+    let (cond_str, _) = generate_expr(&if_expr.cond, env)?;
+    let then_body = generate_block(&if_expr.then_branch, env, tail)?;
 
     let else_str = match &if_expr.else_branch {
         None => String::new(),
         Some((_, else_expr)) => match else_expr.as_ref() {
             syn::Expr::Block(b) => {
-                let else_tail = match tail {
-                    Tail::Return => Tail::Return,
-                    Tail::Assign(n) => Tail::Assign(n),
-                    Tail::Discard => Tail::Discard,
-                };
-                let body = generate_block(&b.block, env, else_tail);
+                let body = generate_block(&b.block, env, tail)?;
                 format!(" else {{\n{body}}}")
             }
             syn::Expr::If(nested) => {
-                let nested_tail = match tail {
-                    Tail::Return => Tail::Return,
-                    Tail::Assign(n) => Tail::Assign(n),
-                    Tail::Discard => Tail::Discard,
-                };
-                format!(" else {}", generate_if(nested, nested_tail, env))
+                format!(" else {}", generate_if(nested, tail, env)?)
             }
-            _ => panic!("unsupported else branch"),
+            _ => return Err(TranspileError::UnsupportedSyntax("else branch format")),
         },
     };
 
-    format!("if ({cond_str}) {{\n{then_body}}}{else_str}\n")
+    Ok(format!("if ({cond_str}) {{\n{then_body}}}{else_str}\n"))
 }
 
-fn generate_expr(expr: &syn::Expr, env: &TypeEnv) -> (String, GlslType) {
+fn generate_expr(expr: &syn::Expr, env: &TypeEnv) -> Result<(String, GlslType), TranspileError> {
     match expr {
         syn::Expr::Binary(bin) => {
-            let (left, left_ty) = generate_expr(&bin.left, env);
-            let (right, right_ty) = generate_expr(&bin.right, env);
+            let (left, left_ty) = generate_expr(&bin.left, env)?;
+            let (right, right_ty) = generate_expr(&bin.right, env)?;
             let (op, ty) = match &bin.op {
-                syn::BinOp::Add(_) => ("+", infer_binop_type(&left_ty, &right_ty)),
-                syn::BinOp::Sub(_) => ("-", infer_binop_type(&left_ty, &right_ty)),
-                syn::BinOp::Mul(_) => ("*", infer_binop_type(&left_ty, &right_ty)),
-                syn::BinOp::Div(_) => ("/", infer_binop_type(&left_ty, &right_ty)),
+                syn::BinOp::Add(_) => ("+",  infer_binop_type(&left_ty, &right_ty)),
+                syn::BinOp::Sub(_) => ("-",  infer_binop_type(&left_ty, &right_ty)),
+                syn::BinOp::Mul(_) => ("*",  infer_binop_type(&left_ty, &right_ty)),
+                syn::BinOp::Div(_) => ("/",  infer_binop_type(&left_ty, &right_ty)),
                 syn::BinOp::Eq(_)  => ("==", GlslType::Bool),
                 syn::BinOp::Ne(_)  => ("!=", GlslType::Bool),
                 syn::BinOp::Lt(_)  => ("<",  GlslType::Bool),
                 syn::BinOp::Gt(_)  => (">",  GlslType::Bool),
                 syn::BinOp::Le(_)  => ("<=", GlslType::Bool),
                 syn::BinOp::Ge(_)  => (">=", GlslType::Bool),
-                _ => panic!("unsupported op"),
+                _ => return Err(TranspileError::UnsupportedSyntax("unsupported binary operator")),
             };
-            (format!("({left} {op} {right})"), ty)
+            Ok((format!("({left} {op} {right})"), ty))
         }
 
         syn::Expr::Call(call) => {
             let func_name = match &*call.func {
                 syn::Expr::Path(p) => p.path.segments.last().unwrap().ident.to_string(),
-                _ => panic!("unsupported call"),
+                _ => return Err(TranspileError::UnsupportedSyntax("Function calls other than path")),
             };
 
-            let (arg_strs, arg_types): (Vec<_>, Vec<_>) = call.args.iter()
+            let args_and_types = call.args.iter()
                 .map(|a| generate_expr(a, env))
-                .unzip();
+                .collect::<Result<Vec<_>, _>>()?;
+            let (arg_strs, arg_types): (Vec<_>, Vec<_>) = args_and_types.into_iter().unzip();
 
             let ty = infer_call_type(&func_name, &arg_types);
-            (format!("{func_name}({})", arg_strs.join(", ")), ty)
+            Ok((format!("{func_name}({})", arg_strs.join(", ")), ty))
         }
 
         syn::Expr::Field(field) => {
-            let (base, _) = generate_expr(&field.base, env);
+            let (base, _) = generate_expr(&field.base, env)?;
             let member = match &field.member {
                 syn::Member::Named(id) => id.to_string(),
-                _ => panic!("unsupported field"),
+                _ => return Err(TranspileError::UnsupportedSyntax("tuple field access")),
             };
-            let ty = infer_swizzle_type(&member);
-            (format!("{base}.{member}"), ty)
+            let ty = infer_swizzle_type(&member)?;
+            Ok((format!("{base}.{member}"), ty))
         }
 
         syn::Expr::Path(p) => {
             let var_name = p.path.segments.last().unwrap().ident.to_string();
             let ty = env.get(&var_name)
-                .unwrap_or_else(|| panic!("unknown variable: {var_name}"))
+                .ok_or_else(|| TranspileError::UnknownVariable(var_name.clone()))?
                 .clone();
-            (var_name, ty)
+            Ok((var_name, ty))
         }
 
         syn::Expr::Unary(u) => {
-            let (inner, ty) = generate_expr(&u.expr, env);
+            let (inner, ty) = generate_expr(&u.expr, env)?;
             let (op, out_ty) = match &u.op {
                 syn::UnOp::Neg(_) => ("-", ty),
                 syn::UnOp::Not(_) => ("!", GlslType::Bool),
-                _ => panic!("unsupported unary op"),
+                _ => return Err(TranspileError::UnsupportedSyntax("unsupported unary operator")),
             };
-            (format!("({op}{inner})"), out_ty)
+            Ok((format!("({op}{inner})"), out_ty))
         }
 
-        syn::Expr::Lit(lit) => {
-            match &lit.lit {
-                syn::Lit::Float(f) => (f.to_string(), GlslType::Float),
-                syn::Lit::Int(i) => (format!("{}.0", i), GlslType::Float),
-                syn::Lit::Bool(b) => (b.value.to_string(), GlslType::Bool),
-                _ => panic!("unsupported literal"),
-            }
-        }
+        syn::Expr::Lit(lit) => match &lit.lit {
+            syn::Lit::Float(f) => Ok((f.to_string(), GlslType::Float)),
+            syn::Lit::Int(i)   => Ok((format!("{}.0", i), GlslType::Float)),
+            syn::Lit::Bool(b)  => Ok((b.value.to_string(), GlslType::Bool)),
+            _ => Err(TranspileError::UnsupportedSyntax("Types of literals")),
+        },
 
-        _ => panic!("unsupported expr"),
+        _ => Err(TranspileError::UnsupportedSyntax("Types of equations")),
     }
 }
 
@@ -290,19 +279,19 @@ fn infer_call_type(func: &str, arg_types: &[GlslType]) -> GlslType {
     }
 }
 
-fn infer_swizzle_type(member: &str) -> GlslType {
+fn infer_swizzle_type(member: &str) -> Result<GlslType, TranspileError> {
     match member.len() {
-        1 => GlslType::Float,
-        2 => GlslType::Vec2,
-        3 => GlslType::Vec3,
-        4 => GlslType::Vec4,
-        _ => panic!("unsupported swizzle: {member}"),
+        1 => Ok(GlslType::Float),
+        2 => Ok(GlslType::Vec2),
+        3 => Ok(GlslType::Vec3),
+        4 => Ok(GlslType::Vec4),
+        _ => Err(TranspileError::UnsupportedSyntax("The swizzle length exceeds 4.")),
     }
 }
 
-fn extract_ident(pat: &syn::Pat) -> String {
+fn extract_ident(pat: &syn::Pat) -> Result<String, TranspileError> {
     match pat {
-        syn::Pat::Ident(i) => i.ident.to_string(),
-        _ => panic!("unsupported pat"),
+        syn::Pat::Ident(i) => Ok(i.ident.to_string()),
+        _ => Err(TranspileError::UnsupportedSyntax("Patterns other than identifiers")),
     }
 }
