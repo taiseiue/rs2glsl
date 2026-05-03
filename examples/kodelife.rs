@@ -6,20 +6,20 @@ fn pixel(uv: Point, resolution: Point, time: f32, mouse: Point, spectrum: Color)
     }
 }
 
-#[builtin(time)]
+#[builtin("time")]
 static time: f32 = 0.0;
 
-#[builtin(resolution)]
+#[builtin("resolution")]
 static resolution: Vec2 = vec2();
 
-#[builtin(mouse)]
+#[builtin("mouse")]
 static mouse: Vec2 = vec2();
 
-#[builtin(spectrum)]
+#[builtin("spectrum")]
 static spectrum: Vec3 = vec3();
 
 // KodeLife 側で inData.v_texcoord を builtin として読む想定
-#[builtin(inData.v_texcoord)]
+#[builtin("inData.v_texcoord")]
 static v_texcoord: Vec2 = vec2();
 
 fn main(frag_color: &mut Vec4) {

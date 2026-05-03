@@ -227,10 +227,10 @@ struct Color {
     b: f32,
 }
 
-#[builtin(iResolution)]
+#[builtin("iResolution")]
 static i_resolution: Vec3 = vec3();
 
-#[builtin(iTime)]
+#[builtin("iTime")]
 static i_time: f32 = 0;
 fn mainImage(frag_color: &mut Vec4, frag_coord: Vec2) {
     let resolution = Point {

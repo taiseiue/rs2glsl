@@ -153,7 +153,7 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     fn builtin_renames_to_glsl_name() {
         let out = glsl(
             "\
-#[builtin(iTime)]
+#[builtin(\"iTime\")]
 static i_time: f32;
 fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     vec4(sin(i_time), 0.0, 0.0, 1.0)
@@ -168,7 +168,7 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     fn builtin_vec3_swizzle() {
         let out = glsl(
             "\
-#[builtin(iResolution)]
+#[builtin(\"iResolution\")]
 static i_resolution: Vec3;
 fn main_image(frag_color: &mut Vec4, frag_coord: Vec2) {
     let uv = frag_coord / i_resolution.xy;
@@ -182,7 +182,7 @@ fn main_image(frag_color: &mut Vec4, frag_coord: Vec2) {
     fn builtin_dotted_glsl_name() {
         let out = glsl(
             "\
-#[builtin(inData.v_texcoord)]
+#[builtin(\"inData.v_texcoord\")]
 static v_texcoord: Vec2;
 fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     vec4(v_texcoord.x, v_texcoord.y, 0.0, 1.0)
@@ -199,7 +199,7 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     fn builtin_no_glsl_declaration_emitted() {
         let out = glsl(
             "\
-#[builtin(iTime)]
+#[builtin(\"iTime\")]
 static i_time: f32;
 fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     vec4(i_time, 0.0, 0.0, 1.0)
@@ -208,6 +208,48 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         // GLSL宣言は出力されない
         assert!(!out.contains("uniform"));
         assert!(!out.contains("static"));
+    }
+
+    #[test]
+    fn uniform_emits_glsl_declaration() {
+        let out = glsl(
+            "\
+#[uniform]
+static time: f32;
+fn main_image(frag_coord: Vec2, resolution: Vec2) -> Vec4 {
+    vec4(time, 0.0, 0.0, 1.0)
+}",
+        );
+        assert!(out.starts_with("uniform float time;"));
+        assert!(out.contains("return vec4(time, 0.0, 0.0, 1.0);"));
+    }
+
+    #[test]
+    fn uniform_initializer_is_ignored() {
+        let out = glsl(
+            "\
+#[uniform]
+static time: f32 = 0.0;
+fn main_image(frag_coord: Vec2, resolution: Vec2) -> Vec4 {
+    vec4(time, 0.0, 0.0, 1.0)
+}",
+        );
+        assert!(out.contains("uniform float time;"));
+        assert!(!out.contains("= 0.0"));
+    }
+
+    #[test]
+    fn out_static_emits_glsl_declaration() {
+        let out = glsl(
+            "\
+#[out]
+static mut fragColor: Vec4;
+fn main_image(frag_coord: Vec2, resolution: Vec2) {
+    fragColor = vec4(1.0, 0.0, 0.0, 1.0);
+}",
+        );
+        assert!(out.starts_with("out vec4 fragColor;"));
+        assert!(out.contains("fragColor = vec4(1.0, 0.0, 0.0, 1.0);"));
     }
 
     // ── out パラメータ ────────────────────────────────────────────────────
@@ -425,6 +467,106 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
             err,
             TranspileError::UnsupportedSyntax(
                 "unsupported cast; only int <-> float casts are supported"
+            )
+        ));
+        assert_eq!(err.code(), "E0005");
+    }
+
+    #[test]
+    fn error_builtin_and_uniform_cannot_be_combined() {
+        let err = transpile_to_glsl(
+            "\
+#[builtin(\"iTime\")]
+#[uniform]
+static time: f32;
+fn main_image(frag_coord: Vec2, resolution: Vec2) -> Vec4 {
+    vec4(time, 0.0, 0.0, 1.0)
+}",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            TranspileError::UnsupportedSyntax(
+                "#[builtin], #[uniform], and #[out] are mutually exclusive"
+            )
+        ));
+        assert_eq!(err.code(), "E0005");
+    }
+
+    #[test]
+    fn error_builtin_requires_string_literal() {
+        let err = transpile_to_glsl(
+            "\
+#[builtin(iTime)]
+static time: f32;
+fn main_image(frag_coord: Vec2, resolution: Vec2) -> Vec4 {
+    vec4(time, 0.0, 0.0, 1.0)
+}",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            TranspileError::UnsupportedSyntax(
+                "#[builtin] requires a GLSL name string: #[builtin(\"iResolution\")]"
+            )
+        ));
+        assert_eq!(err.code(), "E0005");
+    }
+
+    #[test]
+    fn error_builtin_rejects_non_identifier_characters() {
+        let err = transpile_to_glsl(
+            "\
+#[builtin(\"gl-FragCoord\")]
+static frag_coord: Vec4;
+fn main_image(frag_coord_in: Vec2, resolution: Vec2) -> Vec4 {
+    frag_coord
+}",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            TranspileError::UnsupportedSyntax(
+                "#[builtin] GLSL names must be dot-separated C identifiers"
+            )
+        ));
+        assert_eq!(err.code(), "E0005");
+    }
+
+    #[test]
+    fn error_out_requires_static_mut() {
+        let err = transpile_to_glsl(
+            "\
+#[out]
+static fragColor: Vec4;
+fn main_image(frag_coord: Vec2, resolution: Vec2) {
+    fragColor = vec4(1.0, 0.0, 0.0, 1.0);
+}",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            TranspileError::UnsupportedSyntax("#[out] requires `static mut`")
+        ));
+        assert_eq!(err.code(), "E0005");
+    }
+
+    #[test]
+    fn error_out_cannot_be_combined_with_uniform() {
+        let err = transpile_to_glsl(
+            "\
+#[uniform]
+#[out]
+static mut fragColor: Vec4;
+fn main_image(frag_coord: Vec2, resolution: Vec2) {
+    fragColor = vec4(1.0, 0.0, 0.0, 1.0);
+}",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            TranspileError::UnsupportedSyntax(
+                "#[builtin], #[uniform], and #[out] are mutually exclusive"
             )
         ));
         assert_eq!(err.code(), "E0005");

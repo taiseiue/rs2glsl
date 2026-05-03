@@ -20,23 +20,63 @@ enum Tail<'a> {
     Discard,
 }
 
-// #[builtin(GLSL名)] があれば Some(name)、なければ None、不正な形式なら Err
-// GLSL名はドット区切りも許容する (例: inData.v_texcoord)
-fn find_builtin_attr(attrs: &[syn::Attribute]) -> Result<Option<String>, TranspileError> {
+#[derive(Default)]
+struct StaticAttrs {
+    builtin: Option<String>,
+    uniform: bool,
+    out: bool,
+}
+
+fn is_valid_builtin_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.split('.').all(|segment| {
+            let mut chars = segment.chars();
+            match chars.next() {
+                Some(first) if first == '_' || first.is_ascii_alphabetic() => {}
+                _ => return false,
+            }
+            chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+        })
+}
+
+// #[builtin("GLSL名")] があれば Some(name)、なければ None、不正な形式なら Err
+// GLSL名はドット区切りを許容し、各セグメントはC言語識別子として妥当である必要がある
+fn parse_static_attrs(attrs: &[syn::Attribute]) -> Result<StaticAttrs, TranspileError> {
+    let mut parsed = StaticAttrs::default();
+
     for attr in attrs {
         if attr.path().is_ident("builtin") {
-            let parts = attr.parse_args_with(
-                syn::punctuated::Punctuated::<syn::Ident, syn::Token![.]>::parse_separated_nonempty
-            ).map_err(|_| TranspileError::UnsupportedSyntax("#[builtin] requires a GLSL name: #[builtin(iResolution)]"))?;
-            let name = parts
-                .into_iter()
-                .map(|i| i.to_string())
-                .collect::<Vec<_>>()
-                .join(".");
-            return Ok(Some(name));
+            let name = attr
+                .parse_args::<syn::LitStr>()
+                .map_err(|_| {
+                    TranspileError::UnsupportedSyntax(
+                        "#[builtin] requires a GLSL name string: #[builtin(\"iResolution\")]",
+                    )
+                })?
+                .value();
+            if !is_valid_builtin_name(&name) {
+                return Err(TranspileError::UnsupportedSyntax(
+                    "#[builtin] GLSL names must be dot-separated C identifiers",
+                ));
+            }
+            parsed.builtin = Some(name);
+        } else if attr.path().is_ident("uniform") {
+            parsed.uniform = true;
+        } else if attr.path().is_ident("out") {
+            parsed.out = true;
         }
     }
-    Ok(None)
+
+    let attr_count = usize::from(parsed.builtin.is_some())
+        + usize::from(parsed.uniform)
+        + usize::from(parsed.out);
+    if attr_count > 1 {
+        return Err(TranspileError::UnsupportedSyntax(
+            "#[builtin], #[uniform], and #[out] are mutually exclusive",
+        ));
+    }
+
+    Ok(parsed)
 }
 
 pub fn generate(file: &File) -> Result<String, TranspileError> {
@@ -71,20 +111,42 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
         }
     }
 
-    // ビルトイン変数 (#[builtin(GLSL名)] static 名前: 型;)
+    // グローバル変数
     let mut global_env = TypeEnv::new();
+    let mut uniforms = Vec::new();
+    let mut outputs = Vec::new();
     for node in &file.items {
         if let Item::Static(s) = node {
-            if let Some(glsl_name) = find_builtin_attr(&s.attrs)? {
-                let rust_name = s.ident.to_string();
-                let inner_ty = ty::parse_type(&s.ty, &registry, &aliases)?;
+            let attrs = parse_static_attrs(&s.attrs)?;
+            let rust_name = s.ident.to_string();
+            let inner_ty = ty::parse_type(&s.ty, &registry, &aliases)?;
+
+            if let Some(glsl_name) = attrs.builtin {
                 global_env.insert(rust_name, GlslType::Builtin(glsl_name, Box::new(inner_ty)));
+            } else if attrs.uniform {
+                uniforms.push(format!("uniform {} {rust_name};\n", inner_ty.to_glsl()));
+                global_env.insert(rust_name, inner_ty);
+            } else if attrs.out {
+                if matches!(s.mutability, syn::StaticMutability::None) {
+                    return Err(TranspileError::UnsupportedSyntax(
+                        "#[out] requires `static mut`",
+                    ));
+                }
+                outputs.push(format!("out {} {rust_name};\n", inner_ty.to_glsl()));
+                global_env.insert(rust_name, inner_ty);
             }
         }
     }
 
-    // 定数
     let mut out = String::new();
+    for uniform in uniforms {
+        out.push_str(&uniform);
+    }
+    for output in outputs {
+        out.push_str(&output);
+    }
+
+    // 定数
     for node in &file.items {
         if let Item::Const(c) = node {
             let name = c.ident.to_string();
