@@ -1,0 +1,56 @@
+use crate::errors::TranspileError;
+use crate::types::GlslType;
+
+pub(super) fn parse_type(ty: &syn::Type) -> Result<GlslType, TranspileError> {
+    let ident = match ty {
+        syn::Type::Path(p) => &p.path.segments.last().unwrap().ident,
+        _ => return Err(TranspileError::UnsupportedSyntax("non-path type")),
+    };
+    match ident.to_string().as_str() {
+        "bool" => Ok(GlslType::Bool),
+        "f32"  => Ok(GlslType::Float),
+        "Vec2" => Ok(GlslType::Vec2),
+        "Vec3" => Ok(GlslType::Vec3),
+        "Vec4" => Ok(GlslType::Vec4),
+        unknown => Err(TranspileError::UnsupportedType(unknown.to_string())),
+    }
+}
+
+pub(super) fn infer_binop_type(left: &GlslType, right: &GlslType) -> GlslType {
+    match (left, right) {
+        (GlslType::Float, GlslType::Float) => GlslType::Float,
+        (vec, GlslType::Float) => vec.clone(),
+        (GlslType::Float, vec) => vec.clone(),
+        (a, _) => a.clone(),
+    }
+}
+
+pub(super) fn infer_call_type(func: &str, arg_types: &[GlslType]) -> GlslType {
+    let first = || arg_types.first().cloned().unwrap_or(GlslType::Float);
+    match func {
+        "vec2" => GlslType::Vec2,
+        "vec3" => GlslType::Vec3,
+        "vec4" => GlslType::Vec4,
+        "cross" => GlslType::Vec3,
+        "length" | "dot" | "distance" => GlslType::Float,
+        "sin" | "cos" | "tan" | "asin" | "acos" | "atan"
+        | "sqrt" | "inversesqrt" | "abs" | "sign"
+        | "floor" | "ceil" | "fract" | "round"
+        | "exp" | "log" | "exp2" | "log2"
+        | "radians" | "degrees" | "normalize"
+        | "reflect" | "refract"
+        | "min" | "max" | "mod" | "pow"
+        | "mix" | "clamp" | "smoothstep" => first(),
+        _ => GlslType::Float,
+    }
+}
+
+pub(super) fn infer_swizzle_type(member: &str) -> Result<GlslType, TranspileError> {
+    match member.len() {
+        1 => Ok(GlslType::Float),
+        2 => Ok(GlslType::Vec2),
+        3 => Ok(GlslType::Vec3),
+        4 => Ok(GlslType::Vec4),
+        _ => Err(TranspileError::UnsupportedSyntax("swizzle length exceeds 4")),
+    }
+}
