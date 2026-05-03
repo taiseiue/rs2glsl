@@ -20,6 +20,10 @@ pub(super) fn generate_expr(
                 syn::BinOp::Sub(_) => ("-", ty::infer_binop_type(&left_ty, &right_ty)),
                 syn::BinOp::Mul(_) => ("*", ty::infer_binop_type(&left_ty, &right_ty)),
                 syn::BinOp::Div(_) => ("/", ty::infer_binop_type(&left_ty, &right_ty)),
+                syn::BinOp::AddAssign(_) => ("+=", left_ty.clone()),
+                syn::BinOp::SubAssign(_) => ("-=", left_ty.clone()),
+                syn::BinOp::MulAssign(_) => ("*=", left_ty.clone()),
+                syn::BinOp::DivAssign(_) => ("/=", left_ty.clone()),
                 syn::BinOp::Eq(_) => ("==", GlslType::Bool),
                 syn::BinOp::Ne(_) => ("!=", GlslType::Bool),
                 syn::BinOp::Lt(_) => ("<", GlslType::Bool),
@@ -46,8 +50,12 @@ pub(super) fn generate_expr(
                 .collect::<Result<Vec<_>, _>>()?;
             let (arg_strs, arg_types): (Vec<_>, Vec<_>) = args_and_types.into_iter().unzip();
 
+            let glsl_name = func_registry
+                .get(&func_name)
+                .map(|attrs| attrs.glsl_name.as_str())
+                .unwrap_or(&func_name);
             let out_ty = ty::infer_call_type(&func_name, &arg_types, func_registry);
-            Ok((format!("{func_name}({})", arg_strs.join(", ")), out_ty))
+            Ok((format!("{glsl_name}({})", arg_strs.join(", ")), out_ty))
         }
 
         syn::Expr::Struct(s) => {

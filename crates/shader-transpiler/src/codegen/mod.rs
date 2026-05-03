@@ -11,7 +11,13 @@ mod ty;
 
 type TypeEnv = HashMap<String, GlslType>;
 type TypeAliasMap = HashMap<String, GlslType>;
-type FuncRegistry = HashMap<String, GlslType>;
+type FuncRegistry = HashMap<String, FuncAttrs>;
+
+#[derive(Clone)]
+struct FuncAttrs {
+    glsl_name: String,
+    return_type: Option<GlslType>,
+}
 
 #[derive(Clone, Copy)]
 enum Tail<'a> {
@@ -27,6 +33,11 @@ struct StaticAttrs {
     out: bool,
 }
 
+#[derive(Default)]
+struct FunctionAttrs {
+    builtin: Option<String>,
+}
+
 fn is_valid_builtin_name(name: &str) -> bool {
     !name.is_empty()
         && name.split('.').all(|segment| {
@@ -39,10 +50,8 @@ fn is_valid_builtin_name(name: &str) -> bool {
         })
 }
 
-// #[builtin("GLSL名")] があれば Some(name)、なければ None、不正な形式なら Err
-// GLSL名はドット区切りを許容し、各セグメントはC言語識別子として妥当である必要がある
-fn parse_static_attrs(attrs: &[syn::Attribute]) -> Result<StaticAttrs, TranspileError> {
-    let mut parsed = StaticAttrs::default();
+fn parse_builtin_attr(attrs: &[syn::Attribute]) -> Result<Option<String>, TranspileError> {
+    let mut builtin = None;
 
     for attr in attrs {
         if attr.path().is_ident("builtin") {
@@ -59,8 +68,22 @@ fn parse_static_attrs(attrs: &[syn::Attribute]) -> Result<StaticAttrs, Transpile
                     "#[builtin] GLSL names must be dot-separated C identifiers",
                 ));
             }
-            parsed.builtin = Some(name);
-        } else if attr.path().is_ident("uniform") {
+            builtin = Some(name);
+        }
+    }
+
+    Ok(builtin)
+}
+
+// #[builtin("GLSL名")] があれば Some(name)、なければ None、不正な形式なら Err
+// GLSL名はドット区切りを許容し、各セグメントはC言語識別子として妥当である必要がある
+fn parse_static_attrs(attrs: &[syn::Attribute]) -> Result<StaticAttrs, TranspileError> {
+    let mut parsed = StaticAttrs::default();
+
+    parsed.builtin = parse_builtin_attr(attrs)?;
+
+    for attr in attrs {
+        if attr.path().is_ident("uniform") {
             parsed.uniform = true;
         } else if attr.path().is_ident("out") {
             parsed.out = true;
@@ -77,6 +100,12 @@ fn parse_static_attrs(attrs: &[syn::Attribute]) -> Result<StaticAttrs, Transpile
     }
 
     Ok(parsed)
+}
+
+fn parse_function_attrs(attrs: &[syn::Attribute]) -> Result<FunctionAttrs, TranspileError> {
+    Ok(FunctionAttrs {
+        builtin: parse_builtin_attr(attrs)?,
+    })
 }
 
 pub fn generate(file: &File) -> Result<String, TranspileError> {
@@ -99,15 +128,24 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
         }
     }
 
-    // 関数シグネチャ (void 関数は登録しない)
+    // 関数シグネチャ
     let mut func_registry = FuncRegistry::new();
     for node in &file.items {
         if let Item::Fn(func) = node {
-            if let syn::ReturnType::Type(_, t) = &func.sig.output {
-                let fn_name = func.sig.ident.to_string();
-                let ret_ty = ty::parse_type(t, &registry, &aliases)?;
-                func_registry.insert(fn_name, ret_ty);
-            }
+            let fn_name = func.sig.ident.to_string();
+            let attrs = parse_function_attrs(&func.attrs)?;
+            let return_type = match &func.sig.output {
+                syn::ReturnType::Type(_, t) => Some(ty::parse_type(t, &registry, &aliases)?),
+                syn::ReturnType::Default => None,
+            };
+            let glsl_name = attrs.builtin.clone().unwrap_or_else(|| fn_name.clone());
+            func_registry.insert(
+                fn_name,
+                FuncAttrs {
+                    glsl_name,
+                    return_type,
+                },
+            );
         }
     }
 
@@ -163,6 +201,10 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
     // 関数
     for node in &file.items {
         if let Item::Fn(func) = node {
+            let attrs = parse_function_attrs(&func.attrs)?;
+            if attrs.builtin.is_some() {
+                continue;
+            }
             let name = func.sig.ident.to_string();
             if !out.is_empty() {
                 // 直前が \n で終わっていれば1つ追加、そうでなければ2つ追加して空行を確保

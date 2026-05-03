@@ -81,7 +81,10 @@ pub(super) fn infer_call_type(
         | "sign" | "floor" | "ceil" | "fract" | "round" | "exp" | "log" | "exp2" | "log2"
         | "radians" | "degrees" | "normalize" | "reflect" | "refract" | "min" | "max" | "mod"
         | "pow" | "mix" | "clamp" | "smoothstep" => first(),
-        name => func_registry.get(name).cloned().unwrap_or(GlslType::Float),
+        name => func_registry
+            .get(name)
+            .and_then(|attrs| attrs.return_type.clone())
+            .unwrap_or(GlslType::Float),
     }
 }
 

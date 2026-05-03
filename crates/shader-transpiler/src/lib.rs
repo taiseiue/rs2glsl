@@ -126,6 +126,20 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     }
 
     #[test]
+    fn if_expression_as_function_tail_returns_from_branches() {
+        let out = glsl(
+            "\
+fn step(edge: f32, x: f32) -> f32 {
+    if x < edge { 0.0 } else { 1.0 }
+}",
+        );
+        assert!(out.contains("float step(float edge, float x)"));
+        assert!(out.contains("if ((x < edge))"));
+        assert!(out.contains("return 0.0;"));
+        assert!(out.contains("return 1.0;"));
+    }
+
+    #[test]
     fn struct_maps_to_glsl_constructor() {
         let out = glsl(
             "\
@@ -211,6 +225,35 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     }
 
     #[test]
+    fn builtin_function_renames_call_and_skips_definition() {
+        let out = glsl(
+            "\
+#[builtin(\"mod\")]
+fn mod_(x: f32, y: f32) -> f32 { x }
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    vec4(mod_(time, 1.0), 0.0, 0.0, 1.0)
+}",
+        );
+        assert!(!out.contains("float mod_(float x, float y)"));
+        assert!(out.contains("return vec4(mod(time, 1.0), 0.0, 0.0, 1.0);"));
+    }
+
+    #[test]
+    fn builtin_void_function_renames_statement_call() {
+        let out = glsl(
+            "\
+#[builtin(\"barrier\")]
+fn barrier_() {}
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    barrier_();
+    vec4(1.0, 0.0, 0.0, 1.0)
+}",
+        );
+        assert!(!out.contains("void barrier_()"));
+        assert!(out.contains("barrier();"));
+    }
+
+    #[test]
     fn uniform_emits_glsl_declaration() {
         let out = glsl(
             "\
@@ -280,6 +323,34 @@ fn main_image(frag_color: &mut Vec4, frag_coord: Vec2, resolution: Vec2, time: f
         assert!(out.contains("frag_color = vec4(1.0, 0.0, 0.0, 1.0);"));
         assert!(!out.contains("return"));
         assert!(!out.contains("*frag_color"));
+    }
+
+    #[test]
+    fn compound_assign_emits_glsl_operator() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> f32 {
+    let mut value = time;
+    value += 1.0;
+    value *= 0.5;
+    value
+}",
+        );
+        assert!(out.contains("float value = time;"));
+        assert!(out.contains("(value += 1.0);"));
+        assert!(out.contains("(value *= 0.5);"));
+        assert!(out.contains("return value;"));
+    }
+
+    #[test]
+    fn compound_assign_on_field_keeps_member_access() {
+        let out = glsl(
+            "\
+fn main_image(frag_color: &mut Vec4, src: Vec4) {
+    frag_color.x += src.x;
+}",
+        );
+        assert!(out.contains("(frag_color.x += src.x);"));
     }
 
     #[test]
@@ -528,6 +599,26 @@ fn main_image(frag_coord_in: Vec2, resolution: Vec2) -> Vec4 {
             err,
             TranspileError::UnsupportedSyntax(
                 "#[builtin] GLSL names must be dot-separated C identifiers"
+            )
+        ));
+        assert_eq!(err.code(), "E0005");
+    }
+
+    #[test]
+    fn error_builtin_function_requires_string_literal() {
+        let err = transpile_to_glsl(
+            "\
+#[builtin(mod)]
+fn mod_(x: f32, y: f32) -> f32 { x }
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    vec4(mod_(time, 1.0), 0.0, 0.0, 1.0)
+}",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            TranspileError::UnsupportedSyntax(
+                "#[builtin] requires a GLSL name string: #[builtin(\"iResolution\")]"
             )
         ));
         assert_eq!(err.code(), "E0005");

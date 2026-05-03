@@ -48,9 +48,14 @@ pub(super) fn generate_block(
 
             syn::Stmt::Expr(expr, semi) => {
                 if let syn::Expr::If(if_expr) = expr {
+                    let if_tail = if is_last && semi.is_none() {
+                        tail
+                    } else {
+                        Tail::Discard
+                    };
                     out.push_str(&generate_if(
                         if_expr,
-                        Tail::Discard,
+                        if_tail,
                         env,
                         registry,
                         func_registry,
