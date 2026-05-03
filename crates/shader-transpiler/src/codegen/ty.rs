@@ -1,7 +1,7 @@
 use crate::errors::TranspileError;
 use crate::types::GlslType;
 use super::structs::StructRegistry;
-use super::TypeAliasMap;
+use super::{TypeAliasMap, FuncRegistry};
 
 pub(super) fn parse_type(ty: &syn::Type, registry: &StructRegistry, aliases: &TypeAliasMap) -> Result<GlslType, TranspileError> {
     let ident = match ty {
@@ -35,7 +35,7 @@ pub(super) fn infer_binop_type(left: &GlslType, right: &GlslType) -> GlslType {
     }
 }
 
-pub(super) fn infer_call_type(func: &str, arg_types: &[GlslType]) -> GlslType {
+pub(super) fn infer_call_type(func: &str, arg_types: &[GlslType], func_registry: &FuncRegistry) -> GlslType {
     let first = || arg_types.first().map(|t| t.primitive().clone()).unwrap_or(GlslType::Float);
     match func {
         "vec2" => GlslType::Vec2,
@@ -51,7 +51,7 @@ pub(super) fn infer_call_type(func: &str, arg_types: &[GlslType]) -> GlslType {
         | "reflect" | "refract"
         | "min" | "max" | "mod" | "pow"
         | "mix" | "clamp" | "smoothstep" => first(),
-        _ => GlslType::Float,
+        name => func_registry.get(name).cloned().unwrap_or(GlslType::Float),
     }
 }
 

@@ -11,6 +11,7 @@ mod ty;
 
 type TypeEnv = HashMap<String, GlslType>;
 type TypeAliasMap = HashMap<String, GlslType>;
+type FuncRegistry = HashMap<String, GlslType>;
 
 #[derive(Clone, Copy)]
 enum Tail<'a> {
@@ -39,6 +40,19 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
         }
     }
 
+    // 関数シグネチャ
+    let mut func_registry = FuncRegistry::new();
+    for node in &file.items {
+        if let Item::Fn(func) = node {
+            let fn_name = func.sig.ident.to_string();
+            let ret_ty = match &func.sig.output {
+                syn::ReturnType::Type(_, t) => ty::parse_type(t, &registry, &aliases)?,
+                syn::ReturnType::Default => GlslType::Float,
+            };
+            func_registry.insert(fn_name, ret_ty);
+        }
+    }
+
     // 定数
     let mut global_env = TypeEnv::new();
     let mut out = String::new();
@@ -48,24 +62,30 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
             if global_env.contains_key(&name) {
                 return Err(TranspileError::DuplicateConst(name));
             }
-            let (glsl, ty) = item::generate_const(c, &global_env, &registry, &aliases)?;
+            let (glsl, ty) = item::generate_const(c, &global_env, &registry, &aliases, &func_registry)?;
             global_env.insert(name, ty);
             out.push_str(&glsl);
         }
     }
 
-    // main_image
+    // 関数
+    let mut found_main = false;
     for node in &file.items {
         if let Item::Fn(func) = node {
-            if func.sig.ident == "main_image" {
-                if !out.is_empty() {
-                    out.push('\n');
-                }
-                out.push_str(&item::generate_function(func, &global_env, &registry, &aliases)?);
-                return Ok(out);
+            let name = func.sig.ident.to_string();
+            if name == "main_image" {
+                found_main = true;
             }
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(&item::generate_function(func, &name, &global_env, &registry, &aliases, &func_registry)?);
         }
     }
 
-    Err(TranspileError::MainImageNotFound)
+    if found_main {
+        Ok(out)
+    } else {
+        Err(TranspileError::MainImageNotFound)
+    }
 }

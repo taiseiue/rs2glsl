@@ -1,6 +1,6 @@
 use crate::errors::TranspileError;
 use crate::types::GlslType;
-use super::{Tail, TypeEnv, TypeAliasMap};
+use super::{Tail, TypeEnv, TypeAliasMap, FuncRegistry};
 use super::structs::StructRegistry;
 use super::expr::{extract_ident, generate_expr};
 use super::stmt::generate_block;
@@ -11,20 +11,22 @@ pub(super) fn generate_const(
     env: &TypeEnv,
     registry: &StructRegistry,
     aliases: &TypeAliasMap,
+    func_registry: &FuncRegistry,
 ) -> Result<(String, GlslType), TranspileError> {
     let name = item.ident.to_string();
     let ty = parse_type(&item.ty, registry, aliases)?;
-    let (expr_str, _) = generate_expr(&item.expr, env, registry)?;
+    let (expr_str, _) = generate_expr(&item.expr, env, registry, func_registry)?;
     Ok((format!("const {} {name} = {expr_str};\n", ty.to_glsl()), ty))
 }
 
 pub(super) fn generate_function(
     func: &syn::ItemFn,
+    glsl_name: &str,
     global_env: &TypeEnv,
     registry: &StructRegistry,
     aliases: &TypeAliasMap,
+    func_registry: &FuncRegistry,
 ) -> Result<String, TranspileError> {
-    let name = "mainImage";
     let mut env = global_env.clone();
 
     let args = func.sig.inputs.iter().map(|arg| -> Result<String, TranspileError> {
@@ -41,10 +43,10 @@ pub(super) fn generate_function(
 
     let ret = match &func.sig.output {
         syn::ReturnType::Type(_, ty) => parse_type(ty, registry, aliases)?.to_glsl().to_string(),
-        _ => "void".to_string(),
+        syn::ReturnType::Default => "void".to_string(),
     };
 
-    let body = generate_block(&func.block, &mut env, registry, Tail::Return)?;
+    let body = generate_block(&func.block, &mut env, registry, func_registry, Tail::Return)?;
 
-    Ok(format!("{ret} {name}({args}) {{\n{body}\n}}"))
+    Ok(format!("{ret} {glsl_name}({args}) {{\n{body}\n}}"))
 }
