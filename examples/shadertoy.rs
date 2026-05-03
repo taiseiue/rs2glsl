@@ -1,9 +1,4 @@
-fn pixel(
-    frag_coord: Point,
-    resolution: Point,
-    spectrum: Color,
-    time: f32,
-) -> Color {
+fn pixel(frag_coord: Point, resolution: Point, spectrum: Color, time: f32) -> Color {
     let uv = Point {
         x: frag_coord.x / resolution.x,
         y: frag_coord.y / resolution.y,

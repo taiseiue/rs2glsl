@@ -46,7 +46,7 @@ mod tests {
         );
         assert_eq!(
             out,
-            "vec4 main_image(vec2 frag_coord, vec2 resolution, float time) {\nreturn vec4(1.0, 0.0, 0.0, 1.0);\n}"
+            "vec4 main_image(vec2 frag_coord, vec2 resolution, float time);\n\nvec4 main_image(vec2 frag_coord, vec2 resolution, float time) {\nreturn vec4(1.0, 0.0, 0.0, 1.0);\n}"
         );
     }
 
@@ -64,12 +64,28 @@ mod tests {
         let out = glsl("\
 fn double(x: f32) -> f32 { x * 2.0 }
 fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 { vec4(double(time), 0.0, 0.0, 1.0) }");
+        assert!(out.contains("float double(float x);"));
+        assert!(out.contains("vec4 main_image(vec2 frag_coord, vec2 resolution, float time);"));
         // double の戻り値型が float として推論されること
-        assert!(out.contains("float double(float x)"));
-        // helper と main_image の間に空行が入ること
-        assert!(out.contains("}\n\nvec4 main_image"));
+        assert!(out.contains("float double(float x) {"));
         // 呼び出し側で double(time) の型が float と推論され vec4 の引数になること
         assert!(out.contains("return vec4(double(time), 0.0, 0.0, 1.0);"));
+    }
+
+    #[test]
+    fn function_call_can_target_later_definition() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    vec4(double(time), 0.0, 0.0, 1.0)
+}
+fn double(x: f32) -> f32 { x * 2.0 }",
+        );
+        assert!(out.starts_with(
+            "vec4 main_image(vec2 frag_coord, vec2 resolution, float time);\nfloat double(float x);"
+        ));
+        assert!(out.contains("return vec4(double(time), 0.0, 0.0, 1.0);"));
+        assert!(out.contains("float double(float x) {\nreturn (x * 2.0);\n}"));
     }
 
     #[test]
@@ -80,7 +96,7 @@ const PI: f32 = 3.14159;
 fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 { vec4(PI, 0.0, 0.0, 1.0) }",
         );
         assert!(out.starts_with("const float PI = 3.14159;"));
-        assert!(out.contains("const float PI = 3.14159;\n\nvec4 main_image"));
+        assert!(out.contains("const float PI = 3.14159;\n\nvec4 main_image(vec2 frag_coord, vec2 resolution, float time);"));
         assert!(out.contains("return vec4(PI, 0.0, 0.0, 1.0);"));
     }
 

@@ -6,6 +6,12 @@ use super::{FuncRegistry, Tail, TypeAliasMap, TypeEnv};
 use crate::errors::TranspileError;
 use crate::types::GlslType;
 
+struct FunctionParam {
+    name: String,
+    ty: GlslType,
+    is_out: bool,
+}
+
 pub(super) fn generate_const(
     item: &syn::ItemConst,
     env: &TypeEnv,
@@ -19,6 +25,17 @@ pub(super) fn generate_const(
     Ok((format!("const {} {name} = {expr_str};\n", ty.to_glsl()), ty))
 }
 
+pub(super) fn generate_function_declaration(
+    func: &syn::ItemFn,
+    glsl_name: &str,
+    registry: &StructRegistry,
+    aliases: &TypeAliasMap,
+) -> Result<String, TranspileError> {
+    let (params, ret) = build_function_signature(func, registry, aliases)?;
+    let args = format_function_params(&params);
+    Ok(format!("{ret} {glsl_name}({args});"))
+}
+
 pub(super) fn generate_function(
     func: &syn::ItemFn,
     glsl_name: &str,
@@ -28,35 +45,57 @@ pub(super) fn generate_function(
     func_registry: &FuncRegistry,
 ) -> Result<String, TranspileError> {
     let mut env = global_env.clone();
-
-    let args = func
-        .sig
-        .inputs
-        .iter()
-        .map(|arg| -> Result<String, TranspileError> {
-            match arg {
-                syn::FnArg::Typed(pat) => {
-                    let param_name = extract_ident(&pat.pat)?;
-                    let (ty, is_out) = parse_param_type(&pat.ty, registry, aliases)?;
-                    env.insert(param_name.clone(), ty.clone());
-                    let qualifier = if is_out { "out " } else { "" };
-                    Ok(format!("{qualifier}{} {param_name}", ty.to_glsl()))
-                }
-                _ => Err(TranspileError::UnsupportedSyntax("self argument")),
-            }
-        })
-        .collect::<Result<Vec<_>, _>>()?
-        .join(", ");
-
-    let (ret, tail) = match &func.sig.output {
-        syn::ReturnType::Type(_, ty) => (
-            parse_type(ty, registry, aliases)?.to_glsl().to_string(),
-            Tail::Return,
-        ),
-        syn::ReturnType::Default => ("void".to_string(), Tail::Discard),
+    let (params, ret) = build_function_signature(func, registry, aliases)?;
+    for param in &params {
+        env.insert(param.name.clone(), param.ty.clone());
+    }
+    let args = format_function_params(&params);
+    let tail = match &func.sig.output {
+        syn::ReturnType::Type(_, _) => Tail::Return,
+        syn::ReturnType::Default => Tail::Discard,
     };
 
     let body = generate_block(&func.block, &mut env, registry, func_registry, tail)?;
 
     Ok(format!("{ret} {glsl_name}({args}) {{\n{body}}}"))
+}
+
+fn build_function_signature(
+    func: &syn::ItemFn,
+    registry: &StructRegistry,
+    aliases: &TypeAliasMap,
+) -> Result<(Vec<FunctionParam>, String), TranspileError> {
+    let params = func
+        .sig
+        .inputs
+        .iter()
+        .map(|arg| -> Result<FunctionParam, TranspileError> {
+            match arg {
+                syn::FnArg::Typed(pat) => {
+                    let name = extract_ident(&pat.pat)?;
+                    let (ty, is_out) = parse_param_type(&pat.ty, registry, aliases)?;
+                    Ok(FunctionParam { name, ty, is_out })
+                }
+                _ => Err(TranspileError::UnsupportedSyntax("self argument")),
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let ret = match &func.sig.output {
+        syn::ReturnType::Type(_, ty) => parse_type(ty, registry, aliases)?.to_glsl().to_string(),
+        syn::ReturnType::Default => "void".to_string(),
+    };
+
+    Ok((params, ret))
+}
+
+fn format_function_params(params: &[FunctionParam]) -> String {
+    params
+        .iter()
+        .map(|param| {
+            let qualifier = if param.is_out { "out " } else { "" };
+            format!("{qualifier}{} {}", param.ty.to_glsl(), param.name)
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }

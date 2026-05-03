@@ -1,9 +1,4 @@
-fn pixel(
-    frag_coord: Point,
-    resolution: Point,
-    spectrum: Color,
-    time: f32,
-) -> Color {
+fn pixel(frag_coord: Point, resolution: Point, spectrum: Color, time: f32) -> Color {
     let uv = Point {
         x: frag_coord.x / resolution.x,
         y: frag_coord.y / resolution.y,
@@ -43,7 +38,9 @@ static spectrum: Vec3;
 static frag_coord_raw: Vec4;
 
 #[builtin("mod")]
-fn mod_(x: f32, y: f32) -> f32 { x }
+fn mod_(x: f32, y: f32) -> f32 {
+    x
+}
 
 #[out]
 #[glsl_name(fragColor)]

@@ -198,7 +198,8 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
         }
     }
 
-    // 関数
+    let mut declarations = Vec::new();
+    let mut functions = Vec::new();
     for node in &file.items {
         if let Item::Fn(func) = node {
             let attrs = parse_function_attrs(&func.attrs)?;
@@ -206,15 +207,10 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
                 continue;
             }
             let name = func.sig.ident.to_string();
-            if !out.is_empty() {
-                // 直前が \n で終わっていれば1つ追加、そうでなければ2つ追加して空行を確保
-                if out.ends_with('\n') {
-                    out.push('\n');
-                } else {
-                    out.push_str("\n\n");
-                }
-            }
-            out.push_str(&item::generate_function(
+            declarations.push(item::generate_function_declaration(
+                func, &name, &registry, &aliases,
+            )?);
+            functions.push(item::generate_function(
                 func,
                 &name,
                 &global_env,
@@ -225,5 +221,24 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
         }
     }
 
+    append_section(&mut out, &declarations, "\n");
+    append_section(&mut out, &functions, "\n\n");
+
     Ok(out)
+}
+
+fn append_section(out: &mut String, items: &[String], separator: &str) {
+    if items.is_empty() {
+        return;
+    }
+
+    if !out.is_empty() {
+        if out.ends_with('\n') {
+            out.push('\n');
+        } else {
+            out.push_str("\n\n");
+        }
+    }
+
+    out.push_str(&items.join(separator));
 }
