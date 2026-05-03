@@ -1,5 +1,12 @@
-fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
-    let uv = frag_coord / resolution;
-    let c = 0.5 + 0.5 * sin(time + uv.x * 10.0);
-    vec4(c, uv.y, 1.0 - c, 1.0)
+fn pixel(frag_coord: Point, resolution: Point, spectrum: Color, time: f32) -> Color {
+    let uv = Point {
+        x: frag_coord.x / resolution.x,
+        y: frag_coord.y / resolution.y,
+    };
+
+    Color {
+        r: uv.x,
+        g: uv.y,
+        b: spectrum.r,
+    }
 }
