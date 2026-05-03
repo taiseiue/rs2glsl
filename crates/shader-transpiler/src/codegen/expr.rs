@@ -109,14 +109,25 @@ pub(super) fn generate_expr(
             Ok((var_name, out_ty))
         }
 
+        syn::Expr::Assign(a) => {
+            let lhs_str = match &*a.left {
+                syn::Expr::Unary(u) if matches!(u.op, syn::UnOp::Deref(_)) => {
+                    generate_expr(&u.expr, env, registry, func_registry)?.0
+                }
+                e => generate_expr(e, env, registry, func_registry)?.0,
+            };
+            let (rhs_str, rhs_ty) = generate_expr(&a.right, env, registry, func_registry)?;
+            Ok((format!("{lhs_str} = {rhs_str}"), rhs_ty))
+        }
+
         syn::Expr::Unary(u) => {
             let (inner, inner_ty) = generate_expr(&u.expr, env, registry, func_registry)?;
-            let (op, out_ty) = match &u.op {
-                syn::UnOp::Neg(_) => ("-", inner_ty),
-                syn::UnOp::Not(_) => ("!", GlslType::Bool),
-                _ => return Err(TranspileError::UnsupportedSyntax("unary operator")),
-            };
-            Ok((format!("({op}{inner})"), out_ty))
+            match &u.op {
+                syn::UnOp::Neg(_)  => Ok((format!("(-{inner})"), inner_ty)),
+                syn::UnOp::Not(_)  => Ok((format!("(!{inner})"), GlslType::Bool)),
+                syn::UnOp::Deref(_) => Ok((inner, inner_ty)), // *x → x（deref を透過）
+                _ => Err(TranspileError::UnsupportedSyntax("unary operator")),
+            }
         }
 
         syn::Expr::Lit(lit) => match &lit.lit {

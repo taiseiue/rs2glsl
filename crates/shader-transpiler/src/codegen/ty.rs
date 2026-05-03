@@ -3,6 +3,20 @@ use crate::types::GlslType;
 use super::structs::StructRegistry;
 use super::{TypeAliasMap, FuncRegistry};
 
+// &mut T: (T, true=out)、それ以外:(T, false)
+pub(super) fn parse_param_type(
+    ty: &syn::Type,
+    registry: &StructRegistry,
+    aliases: &TypeAliasMap,
+) -> Result<(GlslType, bool), TranspileError> {
+    match ty {
+        syn::Type::Reference(r) if r.mutability.is_some() => {
+            Ok((parse_type(&r.elem, registry, aliases)?, true))
+        }
+        _ => Ok((parse_type(ty, registry, aliases)?, false)),
+    }
+}
+
 pub(super) fn parse_type(ty: &syn::Type, registry: &StructRegistry, aliases: &TypeAliasMap) -> Result<GlslType, TranspileError> {
     let ident = match ty {
         syn::Type::Path(p) => &p.path.segments.last().unwrap().ident,

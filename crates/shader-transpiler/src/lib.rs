@@ -109,6 +109,51 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         assert!(!out.contains("\n\n}"));
     }
 
+    // ── out パラメータ ────────────────────────────────────────────────────
+
+    #[test]
+    fn out_param_emits_qualifier() {
+        let out = glsl("\
+fn main_image(frag_color: &mut Vec4, frag_coord: Vec2, resolution: Vec2, time: f32) {
+    *frag_color = vec4(1.0, 0.0, 0.0, 1.0);
+}");
+        assert!(out.contains("out vec4 frag_color"));
+        // 通常パラメータには qualifier がつかない
+        assert!(out.contains("vec2 frag_coord"));
+        assert!(!out.contains("in vec2"));
+    }
+
+    #[test]
+    fn deref_assign_strips_deref() {
+        let out = glsl("\
+fn main_image(frag_color: &mut Vec4, frag_coord: Vec2, resolution: Vec2, time: f32) {
+    *frag_color = vec4(1.0, 0.0, 0.0, 1.0);
+}");
+        // *frag_color = ... → frag_color = ...（return なし、deref なし）
+        assert!(out.contains("frag_color = vec4(1.0, 0.0, 0.0, 1.0);"));
+        assert!(!out.contains("return"));
+        assert!(!out.contains("*frag_color"));
+    }
+
+    #[test]
+    fn deref_read_strips_deref() {
+        let out = glsl("\
+fn main_image(frag_color: &mut Vec4, src: Vec4) {
+    *frag_color = *src;
+}");
+        // *src の読み取りも deref が消える
+        assert!(out.contains("frag_color = src;"));
+    }
+
+    #[test]
+    fn out_param_void_return() {
+        let out = glsl("\
+fn main_image(frag_color: &mut Vec4, frag_coord: Vec2, resolution: Vec2, time: f32) {
+    *frag_color = vec4(1.0, 0.0, 0.0, 1.0);
+}");
+        assert!(out.starts_with("void main_image("));
+    }
+
     // ── エラー系 ──────────────────────────────────────────────────────────
 
     #[test]

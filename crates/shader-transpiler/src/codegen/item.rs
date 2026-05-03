@@ -4,7 +4,7 @@ use super::{Tail, TypeEnv, TypeAliasMap, FuncRegistry};
 use super::structs::StructRegistry;
 use super::expr::{extract_ident, generate_expr};
 use super::stmt::generate_block;
-use super::ty::parse_type;
+use super::ty::{parse_type, parse_param_type};
 
 pub(super) fn generate_const(
     item: &syn::ItemConst,
@@ -33,9 +33,10 @@ pub(super) fn generate_function(
         match arg {
             syn::FnArg::Typed(pat) => {
                 let param_name = extract_ident(&pat.pat)?;
-                let ty = parse_type(&pat.ty, registry, aliases)?;
+                let (ty, is_out) = parse_param_type(&pat.ty, registry, aliases)?;
                 env.insert(param_name.clone(), ty.clone());
-                Ok(format!("{} {param_name}", ty.to_glsl()))
+                let qualifier = if is_out { "out " } else { "" };
+                Ok(format!("{qualifier}{} {param_name}", ty.to_glsl()))
             }
             _ => Err(TranspileError::UnsupportedSyntax("self argument")),
         }
