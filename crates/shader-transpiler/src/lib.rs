@@ -152,6 +152,21 @@ fn main_image(frag_color: &mut Vec4, frag_coord: Vec2) {
     }
 
     #[test]
+    fn builtin_dotted_glsl_name() {
+        let out = glsl("\
+#[builtin(inData.v_texcoord)]
+static v_texcoord: Vec2;
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    vec4(v_texcoord.x, v_texcoord.y, 0.0, 1.0)
+}");
+        // Rust 名 v_texcoord は GLSL 名 inData.v_texcoord に置換されること
+        assert!(out.contains("inData.v_texcoord.x"));
+        assert!(out.contains("inData.v_texcoord.y"));
+        // 変数宣言として Rust 名が残らないこと
+        assert!(!out.contains("vec2 v_texcoord"));
+    }
+
+    #[test]
     fn builtin_no_glsl_declaration_emitted() {
         let out = glsl("\
 #[builtin(iTime)]

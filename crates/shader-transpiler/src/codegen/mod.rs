@@ -21,12 +21,15 @@ enum Tail<'a> {
 }
 
 // #[builtin(GLSL名)] があれば Some(name)、なければ None、不正な形式なら Err
+// GLSL名はドット区切りも許容する (例: inData.v_texcoord)
 fn find_builtin_attr(attrs: &[syn::Attribute]) -> Result<Option<String>, TranspileError> {
     for attr in attrs {
         if attr.path().is_ident("builtin") {
-            let ident: syn::Ident = attr.parse_args()
-                .map_err(|_| TranspileError::UnsupportedSyntax("#[builtin] requires a GLSL name: #[builtin(iResolution)]"))?;
-            return Ok(Some(ident.to_string()));
+            let parts = attr.parse_args_with(
+                syn::punctuated::Punctuated::<syn::Ident, syn::Token![.]>::parse_separated_nonempty
+            ).map_err(|_| TranspileError::UnsupportedSyntax("#[builtin] requires a GLSL name: #[builtin(iResolution)]"))?;
+            let name = parts.into_iter().map(|i| i.to_string()).collect::<Vec<_>>().join(".");
+            return Ok(Some(name));
         }
     }
     Ok(None)
