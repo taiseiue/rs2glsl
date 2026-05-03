@@ -1,19 +1,29 @@
-// この関数がユーザーコード
-fn pixel(uv: Point, time: f32) -> Color {
-    let c = 0.5 + 0.5 * cos(time + uv.x + 0.0);
+fn pixel(
+    frag_coord: Point,
+    resolution: Point,
+    spectrum: Color,
+    time: f32,
+) -> Color {
+    let uv = Point {
+        x: frag_coord.x / resolution.x,
+        y: frag_coord.y / resolution.y,
+    };
+
     Color {
-        r: c,
+        r: uv.x,
         g: uv.y,
-        b: 1.0,
+        b: spectrum.r,
     }
 }
 
-// これ以下はadapter
+// Shadertoy用アダプタ
+
 #[repr(vec2)]
 struct Point {
     x: f32,
     y: f32,
 }
+
 #[repr(vec3)]
 struct Color {
     #[component(0)]
@@ -28,13 +38,26 @@ struct Color {
 static i_resolution: Vec3 = vec3();
 
 #[builtin("iTime")]
-static i_time: f32 = 0;
+static i_time: f32 = 0.0;
+
 fn mainImage(frag_color: &mut Vec4, frag_coord: Vec2) {
-    let uv = frag_coord / i_resolution.xy;
+    let p = Point {
+        x: frag_coord.x,
+        y: frag_coord.y,
+    };
 
-    let p = Point { x: uv.x, y: uv.y };
+    let res = Point {
+        x: i_resolution.x,
+        y: i_resolution.y,
+    };
 
-    let col = pixel(p, i_time);
+    let spec = Color {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+    };
+
+    let col = pixel(p, res, spec, i_time);
 
     *frag_color = vec4(col.r, col.g, col.b, 1.0);
 }
