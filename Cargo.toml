@@ -1,0 +1,11 @@
+[package]
+name = "rs2glsl"
+version = "0.1.0"
+edition = "2024"
+[workspace]
+members = [
+  "crates/shader-transpiler",
+  "crates/shader-cli"
+]
+resolver = "2"
+
