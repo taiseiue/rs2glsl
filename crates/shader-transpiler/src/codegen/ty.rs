@@ -1,8 +1,9 @@
 use crate::errors::TranspileError;
 use crate::types::GlslType;
 use super::structs::StructRegistry;
+use super::TypeAliasMap;
 
-pub(super) fn parse_type(ty: &syn::Type, registry: &StructRegistry) -> Result<GlslType, TranspileError> {
+pub(super) fn parse_type(ty: &syn::Type, registry: &StructRegistry, aliases: &TypeAliasMap) -> Result<GlslType, TranspileError> {
     let ident = match ty {
         syn::Type::Path(p) => &p.path.segments.last().unwrap().ident,
         _ => return Err(TranspileError::UnsupportedSyntax("non-path type")),
@@ -14,7 +15,9 @@ pub(super) fn parse_type(ty: &syn::Type, registry: &StructRegistry) -> Result<Gl
         "Vec3" => Ok(GlslType::Vec3),
         "Vec4" => Ok(GlslType::Vec4),
         name => {
-            if let Some(def) = registry.get(name) {
+            if let Some(glsl_ty) = aliases.get(name) {
+                Ok(glsl_ty.clone())
+            } else if let Some(def) = registry.get(name) {
                 Ok(GlslType::Struct(name.to_string(), Box::new(def.glsl_type.clone())))
             } else {
                 Err(TranspileError::UnsupportedType(name.to_string()))

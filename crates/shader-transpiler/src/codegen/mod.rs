@@ -10,6 +10,7 @@ mod structs;
 mod ty;
 
 type TypeEnv = HashMap<String, GlslType>;
+type TypeAliasMap = HashMap<String, GlslType>;
 
 #[derive(Clone, Copy)]
 enum Tail<'a> {
@@ -28,6 +29,16 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
         }
     }
 
+    // 型エイリアス
+    let mut aliases = TypeAliasMap::new();
+    for node in &file.items {
+        if let Item::Type(t) = node {
+            let alias_name = t.ident.to_string();
+            let glsl_type = ty::parse_type(&t.ty, &registry, &aliases)?;
+            aliases.insert(alias_name, glsl_type);
+        }
+    }
+
     // 定数
     let mut global_env = TypeEnv::new();
     let mut out = String::new();
@@ -37,7 +48,7 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
             if global_env.contains_key(&name) {
                 return Err(TranspileError::DuplicateConst(name));
             }
-            let (glsl, ty) = item::generate_const(c, &global_env, &registry)?;
+            let (glsl, ty) = item::generate_const(c, &global_env, &registry, &aliases)?;
             global_env.insert(name, ty);
             out.push_str(&glsl);
         }
@@ -50,7 +61,7 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
                 if !out.is_empty() {
                     out.push('\n');
                 }
-                out.push_str(&item::generate_function(func, &global_env, &registry)?);
+                out.push_str(&item::generate_function(func, &global_env, &registry, &aliases)?);
                 return Ok(out);
             }
         }

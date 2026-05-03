@@ -1,6 +1,6 @@
 use crate::errors::TranspileError;
 use crate::types::GlslType;
-use super::{Tail, TypeEnv};
+use super::{Tail, TypeEnv, TypeAliasMap};
 use super::structs::StructRegistry;
 use super::expr::{extract_ident, generate_expr};
 use super::stmt::generate_block;
@@ -10,9 +10,10 @@ pub(super) fn generate_const(
     item: &syn::ItemConst,
     env: &TypeEnv,
     registry: &StructRegistry,
+    aliases: &TypeAliasMap,
 ) -> Result<(String, GlslType), TranspileError> {
     let name = item.ident.to_string();
-    let ty = parse_type(&item.ty, registry)?;
+    let ty = parse_type(&item.ty, registry, aliases)?;
     let (expr_str, _) = generate_expr(&item.expr, env, registry)?;
     Ok((format!("const {} {name} = {expr_str};\n", ty.to_glsl()), ty))
 }
@@ -21,6 +22,7 @@ pub(super) fn generate_function(
     func: &syn::ItemFn,
     global_env: &TypeEnv,
     registry: &StructRegistry,
+    aliases: &TypeAliasMap,
 ) -> Result<String, TranspileError> {
     let name = "mainImage";
     let mut env = global_env.clone();
@@ -29,7 +31,7 @@ pub(super) fn generate_function(
         match arg {
             syn::FnArg::Typed(pat) => {
                 let param_name = extract_ident(&pat.pat)?;
-                let ty = parse_type(&pat.ty, registry)?;
+                let ty = parse_type(&pat.ty, registry, aliases)?;
                 env.insert(param_name.clone(), ty.clone());
                 Ok(format!("{} {param_name}", ty.to_glsl()))
             }
@@ -38,7 +40,7 @@ pub(super) fn generate_function(
     }).collect::<Result<Vec<_>, _>>()?.join(", ");
 
     let ret = match &func.sig.output {
-        syn::ReturnType::Type(_, ty) => parse_type(ty, registry)?.to_glsl().to_string(),
+        syn::ReturnType::Type(_, ty) => parse_type(ty, registry, aliases)?.to_glsl().to_string(),
         _ => "void".to_string(),
     };
 
