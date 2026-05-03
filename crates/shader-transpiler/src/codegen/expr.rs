@@ -149,6 +149,22 @@ pub(super) fn generate_expr(
             Ok((format!("{lhs_str} = {rhs_str}"), rhs_ty))
         }
 
+        syn::Expr::Cast(cast) => {
+            let (expr_str, expr_ty) = generate_expr(&cast.expr, env, registry, func_registry)?;
+            let target_ty = ty::parse_type(&cast.ty, registry, &Default::default())?;
+
+            match (expr_ty.primitive(), target_ty.primitive()) {
+                (GlslType::Int, GlslType::Float) => {
+                    Ok((format!("float({expr_str})"), GlslType::Float))
+                }
+                (GlslType::Float, GlslType::Int) => Ok((format!("int({expr_str})"), GlslType::Int)),
+                (src, dst) if src == dst => Ok((expr_str, target_ty)),
+                _ => Err(TranspileError::UnsupportedSyntax(
+                    "unsupported cast; only int <-> float casts are supported",
+                )),
+            }
+        }
+
         syn::Expr::Unary(u) => {
             let (inner, inner_ty) = generate_expr(&u.expr, env, registry, func_registry)?;
             match &u.op {

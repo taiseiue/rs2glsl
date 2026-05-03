@@ -298,6 +298,46 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         assert!(out.contains("if ((i < 2))"));
     }
 
+    #[test]
+    fn int_to_float_cast_uses_glsl_constructor() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let x = 2;
+    vec4(x as f32, 0.0, 0.0, 1.0)
+}",
+        );
+        assert!(out.contains("int x = 2;"));
+        assert!(out.contains("return vec4(float(x), 0.0, 0.0, 1.0);"));
+    }
+
+    #[test]
+    fn float_to_int_cast_uses_glsl_constructor() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let x = 2.5;
+    let y = x as i32;
+    vec4(y as f32, 0.0, 0.0, 1.0)
+}",
+        );
+        assert!(out.contains("int y = int(x);"));
+        assert!(out.contains("return vec4(float(y), 0.0, 0.0, 1.0);"));
+    }
+
+    #[test]
+    fn same_type_cast_is_noop() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let x = 2;
+    let y = x as i32;
+    vec4(y as f32, 0.0, 0.0, 1.0)
+}",
+        );
+        assert!(out.contains("int y = x;"));
+    }
+
     // ── エラー系 ──────────────────────────────────────────────────────────
 
     #[test]
@@ -367,6 +407,25 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         assert!(matches!(
             err,
             TranspileError::UnsupportedSyntax("for loop start bound must be an integer")
+        ));
+        assert_eq!(err.code(), "E0005");
+    }
+
+    #[test]
+    fn error_cast_outside_int_float_pair() {
+        let err = transpile_to_glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let flag = true;
+    vec4(flag as f32, 0.0, 0.0, 1.0)
+}",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            TranspileError::UnsupportedSyntax(
+                "unsupported cast; only int <-> float casts are supported"
+            )
         ));
         assert_eq!(err.code(), "E0005");
     }
