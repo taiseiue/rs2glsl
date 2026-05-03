@@ -4,27 +4,52 @@ use crate::types::GlslType;
 
 type TypeEnv = HashMap<String, GlslType>;
 
-// 末尾式をどう出力するかのコンテキスト
+// 末尾式をどう出力するか
 enum Tail<'a> {
-    Return,          // 関数末尾 → return expr;
-    Assign(&'a str), // let x = if ... → x = expr;
-    Discard,         // 単独 if 文のブランチ → expr;
+    Return,     
+    Assign(&'a str),
+    Discard,
 }
 
 pub fn generate(file: &File) -> Result<String, String> {
+    let mut global_env = TypeEnv::new();
+    let mut out = String::new();
+
+    // 定数から処理する
+    for item in &file.items {
+        if let Item::Const(c) = item {
+            let (glsl, ty) = generate_const(c, &global_env);
+            global_env.insert(c.ident.to_string(), ty);
+            out.push_str(&glsl);
+        }
+    }
+
+    // main_imageから
     for item in &file.items {
         if let Item::Fn(func) = item {
             if func.sig.ident == "main_image" {
-                return generate_function(func);
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(&generate_function(func, &global_env)?);
+                return Ok(out);
             }
         }
     }
+
     Err("main_image not found".into())
 }
 
-fn generate_function(func: &syn::ItemFn) -> Result<String, String> {
+fn generate_const(item: &syn::ItemConst, env: &TypeEnv) -> (String, GlslType) {
+    let name = item.ident.to_string();
+    let ty = parse_type(&item.ty);
+    let (expr_str, _) = generate_expr(&item.expr, env);
+    (format!("const {} {name} = {expr_str};\n", ty.to_glsl()), ty)
+}
+
+fn generate_function(func: &syn::ItemFn, global_env: &TypeEnv) -> Result<String, String> {
     let name = "mainImage";
-    let mut env = TypeEnv::new();
+    let mut env = global_env.clone();
 
     let args = func.sig.inputs.iter().map(|arg| {
         match arg {
