@@ -213,6 +213,16 @@ fn generate_expr(expr: &syn::Expr, env: &TypeEnv) -> (String, GlslType) {
             (var_name, ty)
         }
 
+        syn::Expr::Unary(u) => {
+            let (inner, ty) = generate_expr(&u.expr, env);
+            let (op, out_ty) = match &u.op {
+                syn::UnOp::Neg(_) => ("-", ty),
+                syn::UnOp::Not(_) => ("!", GlslType::Bool),
+                _ => panic!("unsupported unary op"),
+            };
+            (format!("({op}{inner})"), out_ty)
+        }
+
         syn::Expr::Lit(lit) => {
             match &lit.lit {
                 syn::Lit::Float(f) => (f.to_string(), GlslType::Float),
