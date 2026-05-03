@@ -26,6 +26,8 @@ pub(super) fn generate_expr(
                 syn::BinOp::Gt(_)  => (">",  GlslType::Bool),
                 syn::BinOp::Le(_)  => ("<=", GlslType::Bool),
                 syn::BinOp::Ge(_)  => (">=", GlslType::Bool),
+                syn::BinOp::And(_) => ("&&", GlslType::Bool),
+                syn::BinOp::Or(_)  => ("||", GlslType::Bool),
                 _ => return Err(TranspileError::UnsupportedSyntax("binary operator")),
             };
             Ok((format!("({left} {op} {right})"), out_ty))
@@ -140,6 +142,11 @@ pub(super) fn generate_expr(
             syn::Lit::Bool(b)  => Ok((b.value.to_string(), GlslType::Bool)),
             _ => Err(TranspileError::UnsupportedSyntax("literal kind")),
         },
+
+        syn::Expr::Paren(p) => {
+            let (inner, inner_ty) = generate_expr(&p.expr, env, registry, func_registry)?;
+            Ok((format!("({inner})"), inner_ty))
+        }
 
         _ => Err(TranspileError::UnsupportedSyntax("expression kind")),
     }
