@@ -1,7 +1,8 @@
 use crate::errors::TranspileError;
 use crate::types::GlslType;
+use super::structs::StructRegistry;
 
-pub(super) fn parse_type(ty: &syn::Type) -> Result<GlslType, TranspileError> {
+pub(super) fn parse_type(ty: &syn::Type, registry: &StructRegistry) -> Result<GlslType, TranspileError> {
     let ident = match ty {
         syn::Type::Path(p) => &p.path.segments.last().unwrap().ident,
         _ => return Err(TranspileError::UnsupportedSyntax("non-path type")),
@@ -12,12 +13,18 @@ pub(super) fn parse_type(ty: &syn::Type) -> Result<GlslType, TranspileError> {
         "Vec2" => Ok(GlslType::Vec2),
         "Vec3" => Ok(GlslType::Vec3),
         "Vec4" => Ok(GlslType::Vec4),
-        unknown => Err(TranspileError::UnsupportedType(unknown.to_string())),
+        name => {
+            if let Some(def) = registry.get(name) {
+                Ok(GlslType::Struct(name.to_string(), Box::new(def.glsl_type.clone())))
+            } else {
+                Err(TranspileError::UnsupportedType(name.to_string()))
+            }
+        }
     }
 }
 
 pub(super) fn infer_binop_type(left: &GlslType, right: &GlslType) -> GlslType {
-    match (left, right) {
+    match (left.primitive(), right.primitive()) {
         (GlslType::Float, GlslType::Float) => GlslType::Float,
         (vec, GlslType::Float) => vec.clone(),
         (GlslType::Float, vec) => vec.clone(),
@@ -26,7 +33,7 @@ pub(super) fn infer_binop_type(left: &GlslType, right: &GlslType) -> GlslType {
 }
 
 pub(super) fn infer_call_type(func: &str, arg_types: &[GlslType]) -> GlslType {
-    let first = || arg_types.first().cloned().unwrap_or(GlslType::Float);
+    let first = || arg_types.first().map(|t| t.primitive().clone()).unwrap_or(GlslType::Float);
     match func {
         "vec2" => GlslType::Vec2,
         "vec3" => GlslType::Vec3,

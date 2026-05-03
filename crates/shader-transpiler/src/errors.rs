@@ -14,6 +14,9 @@ pub enum TranspileError {
 
     #[error("Unsupported syntax: {0}")]
     UnsupportedSyntax(&'static str),
+
+    #[error("struct `{0}` requires a #[repr(vec2|vec3|vec4)] attribute")]
+    MissingReprAttr(String),
 }
 
 impl TranspileError {
@@ -24,6 +27,7 @@ impl TranspileError {
             Self::UnsupportedType(_)   => "E0003",
             Self::UnknownVariable(_)   => "E0004",
             Self::UnsupportedSyntax(_) => "E0005",
+            Self::MissingReprAttr(_)   => "E0006",
         }
     }
 }
