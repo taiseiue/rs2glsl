@@ -5,7 +5,8 @@ pub enum GlslType {
     Vec2,
     Vec3,
     Vec4,
-    Struct(String, Box<GlslType>), // (struct名, 対応するGLSLの型)
+    Struct(String, Box<GlslType>),  // (struct名, 対応するGLSLの型)
+    Builtin(String, Box<GlslType>), // (GLSLでの変数名, 実際の型)
 }
 
 impl GlslType {
@@ -17,12 +18,14 @@ impl GlslType {
             GlslType::Vec3 => "vec3",
             GlslType::Vec4 => "vec4",
             GlslType::Struct(_, underlying) => underlying.to_glsl(),
+            GlslType::Builtin(_, underlying) => underlying.to_glsl(),
         }
     }
 
     pub fn primitive(&self) -> &GlslType {
         match self {
             GlslType::Struct(_, u) => u.primitive(),
+            GlslType::Builtin(_, u) => u.primitive(),
             t => t,
         }
     }

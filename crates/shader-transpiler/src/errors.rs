@@ -1,8 +1,5 @@
 #[derive(Debug, thiserror::Error)]
 pub enum TranspileError {
-    #[error("main_image function cannot be found")]
-    MainImageNotFound,
-
     #[error("Duplicate const: `{0}`")]
     DuplicateConst(String),
 
@@ -25,7 +22,6 @@ pub enum TranspileError {
 impl TranspileError {
     pub fn code(&self) -> &'static str {
         match self {
-            Self::MainImageNotFound    => "E0001",
             Self::DuplicateConst(_)    => "E0002",
             Self::UnsupportedType(_)   => "E0003",
             Self::UnknownVariable(_)   => "E0004",

@@ -1,3 +1,15 @@
+// この関数がユーザーコード
+fn pixel(uv: Point, time: f32) -> Color {
+    let c = 0.5 + 0.5 * cos(time + uv.x + 0.0);
+    Color { r: c, g: uv.y, b: 1.0 }
+}
+
+// これ以下はadapter
+#[repr(vec2)]
+struct Point {
+    x: f32,
+    y: f32,
+}
 #[repr(vec3)]
 struct Color {
     #[component(0)]
@@ -8,14 +20,17 @@ struct Color {
     b: f32,
 }
 
-#[repr(vec2)]
-struct Uv {
-    s: f32,
-    t: f32,
-}
+#[builtin(iResolution)]
+static i_resolution: Vec3 = vec3();
 
-fn main_image(frag_color: &mut Vec4, frag_coord: Vec2) {
-    let uv = Uv { s: frag_coord.x , t: frag_coord.y  };
-    let color = Color { r: uv.s, g: uv.t, b: 1.0};
-    *frag_color = vec4(color.r, color.g, color.b, 1.0);
+#[builtin(iTime)]
+static i_time: f32 = 0;
+fn mainImage(frag_color: &mut Vec4, frag_coord: Vec2) {
+    let uv = frag_coord / i_resolution.xy;
+
+    let p = Point { x: uv.x, y: uv.y };
+
+    let col = pixel(p, i_time);
+
+    *frag_color = vec4(col.r, col.g, col.b, 1.0);
 }

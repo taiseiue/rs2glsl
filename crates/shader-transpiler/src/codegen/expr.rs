@@ -103,10 +103,14 @@ pub(super) fn generate_expr(
 
         syn::Expr::Path(p) => {
             let var_name = p.path.segments.last().unwrap().ident.to_string();
-            let out_ty = env.get(&var_name)
+            let ty = env.get(&var_name)
                 .ok_or_else(|| TranspileError::UnknownVariable(var_name.clone()))?
                 .clone();
-            Ok((var_name, out_ty))
+            // ビルトイン変数はRust名の代わりにGLSL名をemitする
+            match ty {
+                GlslType::Builtin(glsl_name, inner) => Ok((glsl_name, *inner)),
+                _ => Ok((var_name, ty)),
+            }
         }
 
         syn::Expr::Assign(a) => {

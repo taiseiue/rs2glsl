@@ -5,9 +5,24 @@ mod types;
 pub use errors::TranspileError;
 
 pub fn transpile_to_glsl(source: &str) -> Result<String, TranspileError> {
-    let file = syn::parse_file(source)
+    // `static NAME: TYPE;`（値なし）はsynがパースできないので `= ()` を補完する
+    let preprocessed = preprocess(source);
+    let file = syn::parse_file(&preprocessed)
         .map_err(|e| TranspileError::ParseError(e.to_string()))?;
     codegen::generate(&file)
+}
+
+fn preprocess(source: &str) -> String {
+    source.lines().map(|line| {
+        let t = line.trim();
+        if t.starts_with("static ") && t.ends_with(';') && !t.contains('=') {
+            // `static NAME: TYPE;` → `static NAME: TYPE = ();`
+            let pos = line.rfind(';').unwrap();
+            format!("{} = ();", &line[..pos])
+        } else {
+            line.to_string()
+        }
+    }).collect::<Vec<_>>().join("\n")
 }
 
 #[cfg(test)]
@@ -109,6 +124,46 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         assert!(!out.contains("\n\n}"));
     }
 
+    // ── ビルトイン変数 ────────────────────────────────────────────────────
+
+    #[test]
+    fn builtin_renames_to_glsl_name() {
+        let out = glsl("\
+#[builtin(iTime)]
+static i_time: f32;
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    vec4(sin(i_time), 0.0, 0.0, 1.0)
+}");
+        // Rust名は消え、GLSL名で emit される
+        assert!(!out.contains("i_time"));
+        assert!(out.contains("sin(iTime)"));
+    }
+
+    #[test]
+    fn builtin_vec3_swizzle() {
+        let out = glsl("\
+#[builtin(iResolution)]
+static i_resolution: Vec3;
+fn main_image(frag_color: &mut Vec4, frag_coord: Vec2) {
+    let uv = frag_coord / i_resolution.xy;
+    *frag_color = vec4(uv.x, uv.y, 0.0, 1.0);
+}");
+        assert!(out.contains("(frag_coord / iResolution.xy)"));
+    }
+
+    #[test]
+    fn builtin_no_glsl_declaration_emitted() {
+        let out = glsl("\
+#[builtin(iTime)]
+static i_time: f32;
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    vec4(i_time, 0.0, 0.0, 1.0)
+}");
+        // GLSL宣言は出力されない
+        assert!(!out.contains("uniform"));
+        assert!(!out.contains("static"));
+    }
+
     // ── out パラメータ ────────────────────────────────────────────────────
 
     #[test]
@@ -155,13 +210,6 @@ fn main_image(frag_color: &mut Vec4, frag_coord: Vec2, resolution: Vec2, time: f
     }
 
     // ── エラー系 ──────────────────────────────────────────────────────────
-
-    #[test]
-    fn error_main_image_not_found() {
-        let err = transpile_to_glsl("fn foo(x: f32) -> f32 { x }").unwrap_err();
-        assert!(matches!(err, TranspileError::MainImageNotFound));
-        assert_eq!(err.code(), "E0001");
-    }
 
     #[test]
     fn error_duplicate_const() {

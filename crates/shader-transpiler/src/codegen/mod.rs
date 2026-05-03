@@ -20,6 +20,18 @@ enum Tail<'a> {
     Discard,
 }
 
+// #[builtin(GLSL名)] があれば Some(name)、なければ None、不正な形式なら Err
+fn find_builtin_attr(attrs: &[syn::Attribute]) -> Result<Option<String>, TranspileError> {
+    for attr in attrs {
+        if attr.path().is_ident("builtin") {
+            let ident: syn::Ident = attr.parse_args()
+                .map_err(|_| TranspileError::UnsupportedSyntax("#[builtin] requires a GLSL name: #[builtin(iResolution)]"))?;
+            return Ok(Some(ident.to_string()));
+        }
+    }
+    Ok(None)
+}
+
 pub fn generate(file: &File) -> Result<String, TranspileError> {
     // 構造体定義
     let mut registry = structs::StructRegistry::new();
@@ -52,8 +64,19 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
         }
     }
 
-    // 定数
+    // ビルトイン変数 (#[builtin(GLSL名)] static 名前: 型;)
     let mut global_env = TypeEnv::new();
+    for node in &file.items {
+        if let Item::Static(s) = node {
+            if let Some(glsl_name) = find_builtin_attr(&s.attrs)? {
+                let rust_name = s.ident.to_string();
+                let inner_ty = ty::parse_type(&s.ty, &registry, &aliases)?;
+                global_env.insert(rust_name, GlslType::Builtin(glsl_name, Box::new(inner_ty)));
+            }
+        }
+    }
+
+    // 定数
     let mut out = String::new();
     for node in &file.items {
         if let Item::Const(c) = node {
@@ -68,13 +91,9 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
     }
 
     // 関数
-    let mut found_main = false;
     for node in &file.items {
         if let Item::Fn(func) = node {
             let name = func.sig.ident.to_string();
-            if name == "main_image" {
-                found_main = true;
-            }
             if !out.is_empty() {
                 // 直前が \n で終わっていれば1つ追加、そうでなければ2つ追加して空行を確保
                 if out.ends_with('\n') {
@@ -87,9 +106,5 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
         }
     }
 
-    if found_main {
-        Ok(out)
-    } else {
-        Err(TranspileError::MainImageNotFound)
-    }
+    Ok(out)
 }
