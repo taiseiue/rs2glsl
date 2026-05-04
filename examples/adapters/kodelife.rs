@@ -1,18 +1,3 @@
-
-// Kodelife用アダプタ
-#[repr(vec2)]
-struct Point {
-    x: f32,
-    y: f32,
-}
-
-#[repr(vec3)]
-struct Color {
-    r: f32,
-    g: f32,
-    b: f32,
-}
-
 #[uniform]
 static time: f32;
 

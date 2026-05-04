@@ -1,21 +1,3 @@
-// Shadertoy用アダプタ
-
-#[repr(vec2)]
-struct Point {
-    x: f32,
-    y: f32,
-}
-
-#[repr(vec3)]
-struct Color {
-    #[component(0)]
-    r: f32,
-    #[component(1)]
-    g: f32,
-    #[component(2)]
-    b: f32,
-}
-
 #[builtin("iResolution")]
 static i_resolution: Vec3 = vec3();
 
