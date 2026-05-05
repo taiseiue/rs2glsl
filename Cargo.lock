@@ -53,6 +53,10 @@ name = "rs2glsl"
 version = "0.1.0"
 
 [[package]]
+name = "rs2glsl-adapters"
+version = "0.1.0"
+
+[[package]]
 name = "rs2glsl-cli"
 version = "0.1.0"
 dependencies = [
