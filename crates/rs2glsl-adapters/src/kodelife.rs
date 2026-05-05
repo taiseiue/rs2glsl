@@ -1,14 +1,17 @@
-#[uniform]
-static time: f32;
+use rs2glsl_macros::{glsl_name, builtin, uniform, out};
+use rs2glsl_prelude::*;
 
 #[uniform]
-static resolution: Vec2;
+static time: f32 = 0;
 
 #[uniform]
-static spectrum: Vec3;
+static resolution: Vec2 = ();
+
+#[uniform]
+static spectrum: Vec3 = ();
 
 #[builtin("gl_FragCoord")]
-static frag_coord_raw: Vec4;
+static frag_coord_raw: Vec4 = ();
 
 #[builtin("mod")]
 fn mod_(x: f32, y: f32) -> f32 {
@@ -17,7 +20,7 @@ fn mod_(x: f32, y: f32) -> f32 {
 
 #[out]
 #[glsl_name(fragColor)]
-static mut frag_color: Vec4;
+static mut frag_color: Vec4 = ();
 
 fn main() {
     let frag_coord = Point {

@@ -1,3 +1,6 @@
+use rs2glsl_macros::{buildin};
+use rs2glsl_prelude::*;
+
 #[builtin("iResolution")]
 static i_resolution: Vec3 = Vec3::new(0.0, 0.0, 0.0);
 
