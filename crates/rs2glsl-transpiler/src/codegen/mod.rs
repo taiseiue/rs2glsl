@@ -175,7 +175,7 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
             if let Some(glsl_name) = attrs.builtin {
                 global_env.insert(rust_name, GlslType::Builtin(glsl_name, Box::new(inner_ty)));
             } else if attrs.uniform {
-                uniforms.push(format!("uniform {} {rust_name};\n", inner_ty.to_glsl()));
+                uniforms.push(format!("uniform {};\n", inner_ty.render_decl(&rust_name)));
                 global_env.insert(rust_name, inner_ty);
             } else if attrs.out {
                 if matches!(s.mutability, syn::StaticMutability::None) {
@@ -183,7 +183,7 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
                         "#[out] requires `static mut`",
                     ));
                 }
-                outputs.push(format!("out {} {rust_name};\n", inner_ty.to_glsl()));
+                outputs.push(format!("out {};\n", inner_ty.render_decl(&rust_name)));
                 global_env.insert(rust_name, inner_ty);
             }
         }

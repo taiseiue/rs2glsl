@@ -22,7 +22,10 @@ pub(super) fn generate_const(
     let name = item.ident.to_string();
     let ty = parse_type(&item.ty, registry, aliases)?;
     let (expr_str, _) = generate_expr(&item.expr, env, registry, func_registry)?;
-    Ok((format!("const {} {name} = {expr_str};\n", ty.to_glsl()), ty))
+    Ok((
+        format!("const {} = {expr_str};\n", ty.render_decl(&name)),
+        ty,
+    ))
 }
 
 pub(super) fn generate_function_declaration(
@@ -55,7 +58,14 @@ pub(super) fn generate_function(
         syn::ReturnType::Default => Tail::Discard,
     };
 
-    let body = generate_block(&func.block, &mut env, registry, func_registry, tail)?;
+    let body = generate_block(
+        &func.block,
+        &mut env,
+        registry,
+        func_registry,
+        aliases,
+        tail,
+    )?;
 
     Ok(format!("{ret} {glsl_name}({args}) {{\n{body}}}"))
 }
@@ -82,7 +92,7 @@ fn build_function_signature(
         .collect::<Result<Vec<_>, _>>()?;
 
     let ret = match &func.sig.output {
-        syn::ReturnType::Type(_, ty) => parse_type(ty, registry, aliases)?.to_glsl().to_string(),
+        syn::ReturnType::Type(_, ty) => render_return_type(&parse_type(ty, registry, aliases)?)?,
         syn::ReturnType::Default => "void".to_string(),
     };
 
@@ -94,8 +104,18 @@ fn format_function_params(params: &[FunctionParam]) -> String {
         .iter()
         .map(|param| {
             let qualifier = if param.is_out { "out " } else { "" };
-            format!("{qualifier}{} {}", param.ty.to_glsl(), param.name)
+            format!("{qualifier}{}", param.ty.render_decl(&param.name))
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn render_return_type(ty: &GlslType) -> Result<String, TranspileError> {
+    if matches!(ty, GlslType::Array(_, _)) {
+        Err(TranspileError::UnsupportedSyntax(
+            "array return types are not supported",
+        ))
+    } else {
+        Ok(ty.to_glsl().to_string())
+    }
 }

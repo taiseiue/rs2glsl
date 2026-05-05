@@ -1,6 +1,7 @@
 use super::expr::{extract_ident, generate_expr};
 use super::structs::StructRegistry;
-use super::{FuncRegistry, Tail, TypeEnv};
+use super::ty::parse_type;
+use super::{FuncRegistry, Tail, TypeAliasMap, TypeEnv};
 use crate::errors::TranspileError;
 use crate::types::GlslType;
 
@@ -9,6 +10,7 @@ pub(super) fn generate_block(
     env: &mut TypeEnv,
     registry: &StructRegistry,
     func_registry: &FuncRegistry,
+    aliases: &TypeAliasMap,
     tail: Tail<'_>,
 ) -> Result<String, TranspileError> {
     let mut out = String::new();
@@ -19,7 +21,7 @@ pub(super) fn generate_block(
 
         match stmt {
             syn::Stmt::Local(local) => {
-                let name = extract_ident(&local.pat)?;
+                let (name, annotated_ty) = extract_local_binding(&local.pat, registry, aliases)?;
                 let init_expr = local
                     .init
                     .as_ref()
@@ -28,21 +30,25 @@ pub(super) fn generate_block(
                     .as_ref();
 
                 if let syn::Expr::If(if_expr) = init_expr {
-                    let ty =
+                    let inferred_ty =
                         infer_block_tail_type(&if_expr.then_branch, env, registry, func_registry)?;
+                    let ty = annotated_ty.unwrap_or(inferred_ty);
                     env.insert(name.clone(), ty.clone());
-                    out.push_str(&format!("{} {name};\n", ty.to_glsl()));
+                    out.push_str(&format!("{};\n", ty.render_decl(&name)));
                     out.push_str(&generate_if(
                         if_expr,
                         Tail::Assign(&name.clone()),
                         env,
                         registry,
                         func_registry,
+                        aliases,
                     )?);
                 } else {
-                    let (expr_str, ty) = generate_expr(init_expr, env, registry, func_registry)?;
+                    let (expr_str, inferred_ty) =
+                        generate_expr(init_expr, env, registry, func_registry)?;
+                    let ty = annotated_ty.unwrap_or(inferred_ty);
                     env.insert(name.clone(), ty.clone());
-                    out.push_str(&format!("{} {name} = {expr_str};\n", ty.to_glsl()));
+                    out.push_str(&format!("{} = {expr_str};\n", ty.render_decl(&name)));
                 }
             }
 
@@ -59,9 +65,16 @@ pub(super) fn generate_block(
                         env,
                         registry,
                         func_registry,
+                        aliases,
                     )?);
                 } else if let syn::Expr::ForLoop(for_loop) = expr {
-                    out.push_str(&generate_for(for_loop, env, registry, func_registry)?);
+                    out.push_str(&generate_for(
+                        for_loop,
+                        env,
+                        registry,
+                        func_registry,
+                        aliases,
+                    )?);
                 } else if is_last && semi.is_none() {
                     let (expr_str, _) = generate_expr(expr, env, registry, func_registry)?;
                     let line = match tail {
@@ -96,6 +109,7 @@ pub(super) fn generate_for(
     env: &TypeEnv,
     registry: &StructRegistry,
     func_registry: &FuncRegistry,
+    aliases: &TypeAliasMap,
 ) -> Result<String, TranspileError> {
     let loop_var = extract_ident(&for_loop.pat)?;
     let range = match for_loop.expr.as_ref() {
@@ -134,6 +148,7 @@ pub(super) fn generate_for(
         &mut loop_env,
         registry,
         func_registry,
+        aliases,
         Tail::Discard,
     )?;
 
@@ -167,21 +182,29 @@ pub(super) fn generate_if(
     env: &mut TypeEnv,
     registry: &StructRegistry,
     func_registry: &FuncRegistry,
+    aliases: &TypeAliasMap,
 ) -> Result<String, TranspileError> {
     let (cond_str, _) = generate_expr(&if_expr.cond, env, registry, func_registry)?;
-    let then_body = generate_block(&if_expr.then_branch, env, registry, func_registry, tail)?;
+    let then_body = generate_block(
+        &if_expr.then_branch,
+        env,
+        registry,
+        func_registry,
+        aliases,
+        tail,
+    )?;
 
     let else_str = match &if_expr.else_branch {
         None => String::new(),
         Some((_, else_expr)) => match else_expr.as_ref() {
             syn::Expr::Block(b) => {
-                let body = generate_block(&b.block, env, registry, func_registry, tail)?;
+                let body = generate_block(&b.block, env, registry, func_registry, aliases, tail)?;
                 format!(" else {{\n{body}}}")
             }
             syn::Expr::If(nested) => {
                 format!(
                     " else {}",
-                    generate_if(nested, tail, env, registry, func_registry)?
+                    generate_if(nested, tail, env, registry, func_registry, aliases)?
                 )
             }
             _ => return Err(TranspileError::UnsupportedSyntax("else branch form")),
@@ -189,4 +212,19 @@ pub(super) fn generate_if(
     };
 
     Ok(format!("if ({cond_str}) {{\n{then_body}}}{else_str}\n"))
+}
+
+fn extract_local_binding(
+    pat: &syn::Pat,
+    registry: &StructRegistry,
+    aliases: &TypeAliasMap,
+) -> Result<(String, Option<GlslType>), TranspileError> {
+    match pat {
+        syn::Pat::Ident(ident) => Ok((ident.ident.to_string(), None)),
+        syn::Pat::Type(typed) => Ok((
+            extract_ident(&typed.pat)?,
+            Some(parse_type(&typed.ty, registry, aliases)?),
+        )),
+        _ => Err(TranspileError::UnsupportedSyntax("non-ident pattern")),
+    }
 }

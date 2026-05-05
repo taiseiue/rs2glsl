@@ -440,6 +440,49 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     }
 
     #[test]
+    fn array_let_initializer_and_index_access() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let weights: [f32; 3] = [1.0, 2.0, 3.0];
+    vec4(weights[1], weights[2], 0.0, 1.0)
+}",
+        );
+        assert!(out.contains("float weights[3] = float[3](1.0, 2.0, 3.0);"));
+        assert!(out.contains("return vec4(weights[1], weights[2], 0.0, 1.0);"));
+    }
+
+    #[test]
+    fn array_parameter_is_emitted_with_size() {
+        let out = glsl(
+            "\
+fn sum(values: [f32; 3]) -> f32 {
+    values[0] + values[1] + values[2]
+}
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    vec4(sum([1.0, 2.0, 3.0]), 0.0, 0.0, 1.0)
+}",
+        );
+        assert!(out.contains("float sum(float values[3]);"));
+        assert!(out.contains("return ((values[0] + values[1]) + values[2]);"));
+        assert!(out.contains("return vec4(sum(float[3](1.0, 2.0, 3.0)), 0.0, 0.0, 1.0);"));
+    }
+
+    #[test]
+    fn array_index_assignment_keeps_subscript_on_lhs() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let values: [f32; 3] = [0.0, 1.0, 2.0];
+    values[1] = 4.0;
+    vec4(values[0], values[1], values[2], 1.0)
+}",
+        );
+        assert!(out.contains("values[1] = 4.0;"));
+        assert!(out.contains("return vec4(values[0], values[1], values[2], 1.0);"));
+    }
+
+    #[test]
     fn int_to_float_cast_uses_glsl_constructor() {
         let out = glsl(
             "\
@@ -567,6 +610,23 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
             TranspileError::UnsupportedSyntax(
                 "unsupported cast; only int <-> float casts are supported"
             )
+        ));
+        assert_eq!(err.code(), "E0005");
+    }
+
+    #[test]
+    fn error_array_index_must_be_integer() {
+        let err = transpile(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let weights: [f32; 3] = [1.0, 2.0, 3.0];
+    vec4(weights[1.0], 0.0, 0.0, 1.0)
+}",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            TranspileError::UnsupportedSyntax("array index must be an integer")
         ));
         assert_eq!(err.code(), "E0005");
     }

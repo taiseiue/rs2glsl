@@ -16,10 +16,10 @@ pub(super) fn generate_expr(
             let (left, left_ty) = generate_expr(&bin.left, env, registry, func_registry)?;
             let (right, right_ty) = generate_expr(&bin.right, env, registry, func_registry)?;
             let (op, out_ty) = match &bin.op {
-                syn::BinOp::Add(_) => ("+", ty::infer_binop_type(&left_ty, &right_ty)),
-                syn::BinOp::Sub(_) => ("-", ty::infer_binop_type(&left_ty, &right_ty)),
-                syn::BinOp::Mul(_) => ("*", ty::infer_binop_type(&left_ty, &right_ty)),
-                syn::BinOp::Div(_) => ("/", ty::infer_binop_type(&left_ty, &right_ty)),
+                syn::BinOp::Add(_) => ("+", ty::infer_binop_type(&left_ty, &right_ty)?),
+                syn::BinOp::Sub(_) => ("-", ty::infer_binop_type(&left_ty, &right_ty)?),
+                syn::BinOp::Mul(_) => ("*", ty::infer_binop_type(&left_ty, &right_ty)?),
+                syn::BinOp::Div(_) => ("/", ty::infer_binop_type(&left_ty, &right_ty)?),
                 syn::BinOp::AddAssign(_) => ("+=", left_ty.clone()),
                 syn::BinOp::SubAssign(_) => ("-=", left_ty.clone()),
                 syn::BinOp::MulAssign(_) => ("*=", left_ty.clone()),
@@ -35,6 +35,41 @@ pub(super) fn generate_expr(
                 _ => return Err(TranspileError::UnsupportedSyntax("binary operator")),
             };
             Ok((format!("({left} {op} {right})"), out_ty))
+        }
+
+        syn::Expr::Array(array) => {
+            let mut element_ty = None;
+            let mut elements = Vec::new();
+
+            for expr in &array.elems {
+                let (expr_str, ty) = generate_expr(expr, env, registry, func_registry)?;
+                if let Some(expected) = &element_ty {
+                    if expected != &ty {
+                        return Err(TranspileError::UnsupportedSyntax(
+                            "array elements must all have the same type",
+                        ));
+                    }
+                } else {
+                    element_ty = Some(ty.clone());
+                }
+                elements.push(expr_str);
+            }
+
+            let element_ty = element_ty.ok_or(TranspileError::UnsupportedSyntax(
+                "empty array literals are not supported",
+            ))?;
+            if matches!(element_ty, GlslType::Array(_, _)) {
+                return Err(TranspileError::UnsupportedSyntax(
+                    "nested arrays are not supported",
+                ));
+            }
+
+            let len = elements.len();
+            let ctor_ty = format!("{}[{len}]", element_ty.to_glsl());
+            Ok((
+                format!("{ctor_ty}({})", elements.join(", ")),
+                GlslType::Array(Box::new(element_ty), len),
+            ))
         }
 
         syn::Expr::Call(call) => {
@@ -142,6 +177,19 @@ pub(super) fn generate_expr(
             }
         }
 
+        syn::Expr::Index(index) => {
+            let (base, base_ty) = generate_expr(&index.expr, env, registry, func_registry)?;
+            let (idx, idx_ty) = generate_expr(&index.index, env, registry, func_registry)?;
+            expect_int_index(&idx_ty)?;
+            let element_ty = base_ty
+                .array_element()
+                .ok_or(TranspileError::UnsupportedSyntax(
+                    "indexing a non-array expression",
+                ))?
+                .clone();
+            Ok((format!("{base}[{idx}]"), element_ty))
+        }
+
         syn::Expr::Path(p) => {
             let var_name = p.path.segments.last().unwrap().ident.to_string();
             let ty = env
@@ -211,6 +259,17 @@ pub(super) fn generate_expr(
 pub(super) fn extract_ident(pat: &syn::Pat) -> Result<String, TranspileError> {
     match pat {
         syn::Pat::Ident(i) => Ok(i.ident.to_string()),
+        syn::Pat::Type(t) => extract_ident(&t.pat),
         _ => Err(TranspileError::UnsupportedSyntax("non-ident pattern")),
+    }
+}
+
+fn expect_int_index(ty: &GlslType) -> Result<(), TranspileError> {
+    if matches!(ty.primitive(), GlslType::Int) {
+        Ok(())
+    } else {
+        Err(TranspileError::UnsupportedSyntax(
+            "array index must be an integer",
+        ))
     }
 }
