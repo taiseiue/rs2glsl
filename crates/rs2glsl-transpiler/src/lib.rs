@@ -487,6 +487,49 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     }
 
     #[test]
+    fn multidimensional_array_literal_and_nested_index_access() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let grid: [[f32; 2]; 2] = [[1.0, 2.0], [3.0, 4.0]];
+    vec4(grid[0][1], grid[1][0], 0.0, 1.0)
+}",
+        );
+        assert!(
+            out.contains("float grid[2][2] = float[2][2](float[2](1.0, 2.0), float[2](3.0, 4.0));")
+        );
+        assert!(out.contains("return vec4(grid[0][1], grid[1][0], 0.0, 1.0);"));
+    }
+
+    #[test]
+    fn repeat_array_initializer_expands_constructor_arguments() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let values: [f32; 3] = [time; 3];
+    vec4(values[0], values[1], values[2], 1.0)
+}",
+        );
+        assert!(out.contains("float values[3] = float[3](time, time, time);"));
+        assert!(out.contains("return vec4(values[0], values[1], values[2], 1.0);"));
+    }
+
+    #[test]
+    fn repeat_initializer_supports_multidimensional_arrays() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let grid: [[f32; 2]; 2] = [[time; 2]; 2];
+    vec4(grid[0][0], grid[0][1], grid[1][0], grid[1][1])
+}",
+        );
+        assert!(out.contains(
+            "float grid[2][2] = float[2][2](float[2](time, time), float[2](time, time));"
+        ));
+        assert!(out.contains("return vec4(grid[0][0], grid[0][1], grid[1][0], grid[1][1]);"));
+    }
+
+    #[test]
     fn array_index_assignment_keeps_subscript_on_lhs() {
         let out = glsl(
             "\
@@ -645,6 +688,40 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         assert!(matches!(
             err,
             TranspileError::UnsupportedSyntax("array index must be an integer")
+        ));
+        assert_eq!(err.code(), "E0005");
+    }
+
+    #[test]
+    fn error_empty_array_literal_is_rejected() {
+        let err = transpile(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let values = [];
+    vec4(1.0, 0.0, 0.0, 1.0)
+}",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            TranspileError::UnsupportedSyntax("GLSL does not support zero-length array literals")
+        ));
+        assert_eq!(err.code(), "E0005");
+    }
+
+    #[test]
+    fn error_zero_length_array_type_is_rejected() {
+        let err = transpile(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let values: [f32; 0] = [1.0; 0];
+    vec4(1.0, 0.0, 0.0, 1.0)
+}",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            TranspileError::UnsupportedSyntax("GLSL does not support zero-length arrays")
         ));
         assert_eq!(err.code(), "E0005");
     }

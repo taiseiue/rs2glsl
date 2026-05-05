@@ -24,11 +24,6 @@ pub(super) fn parse_type(
 ) -> Result<GlslType, TranspileError> {
     if let syn::Type::Array(array) = ty {
         let inner = parse_type(&array.elem, registry, aliases)?;
-        if matches!(inner, GlslType::Array(_, _)) {
-            return Err(TranspileError::UnsupportedSyntax(
-                "nested arrays are not supported",
-            ));
-        }
         return Ok(GlslType::Array(
             Box::new(inner),
             parse_array_len(&array.len)?,
@@ -61,12 +56,21 @@ pub(super) fn parse_type(
     }
 }
 
-fn parse_array_len(len: &syn::Expr) -> Result<usize, TranspileError> {
+pub(super) fn parse_array_len(len: &syn::Expr) -> Result<usize, TranspileError> {
     match len {
         syn::Expr::Lit(expr_lit) => match &expr_lit.lit {
-            syn::Lit::Int(int) => int
-                .base10_parse()
-                .map_err(|_| TranspileError::UnsupportedSyntax("array length must fit in usize")),
+            syn::Lit::Int(int) => {
+                let len = int.base10_parse().map_err(|_| {
+                    TranspileError::UnsupportedSyntax("array length must fit in usize")
+                })?;
+                if len == 0 {
+                    Err(TranspileError::UnsupportedSyntax(
+                        "GLSL does not support zero-length arrays",
+                    ))
+                } else {
+                    Ok(len)
+                }
+            }
             _ => Err(TranspileError::UnsupportedSyntax(
                 "array length must be an integer literal",
             )),

@@ -28,7 +28,7 @@ impl GlslType {
 
     pub fn render_decl(&self, name: &str) -> String {
         match self {
-            GlslType::Array(inner, len) => format!("{} {name}[{len}]", inner.to_glsl()),
+            GlslType::Array(inner, len) => inner.render_decl(&format!("{name}[{len}]")),
             GlslType::Struct(_, underlying) => underlying.render_decl(name),
             GlslType::Builtin(_, underlying) => underlying.render_decl(name),
             _ => format!("{} {name}", self.to_glsl()),
@@ -37,7 +37,7 @@ impl GlslType {
 
     pub fn render_return_type(&self) -> String {
         match self {
-            GlslType::Array(inner, len) => format!("{}[{len}]", inner.to_glsl()),
+            GlslType::Array(inner, len) => format!("{}[{len}]", inner.render_return_type()),
             GlslType::Struct(_, underlying) => underlying.render_return_type(),
             GlslType::Builtin(_, underlying) => underlying.render_return_type(),
             _ => self.to_glsl().to_string(),

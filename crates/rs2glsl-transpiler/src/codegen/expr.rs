@@ -38,38 +38,21 @@ pub(super) fn generate_expr(
         }
 
         syn::Expr::Array(array) => {
-            let mut element_ty = None;
-            let mut elements = Vec::new();
+            let elements = array
+                .elems
+                .iter()
+                .map(|expr| generate_expr(expr, env, registry, func_registry))
+                .collect::<Result<Vec<_>, _>>()?;
+            build_array_literal(elements)
+        }
 
-            for expr in &array.elems {
-                let (expr_str, ty) = generate_expr(expr, env, registry, func_registry)?;
-                if let Some(expected) = &element_ty {
-                    if expected != &ty {
-                        return Err(TranspileError::UnsupportedSyntax(
-                            "array elements must all have the same type",
-                        ));
-                    }
-                } else {
-                    element_ty = Some(ty.clone());
-                }
-                elements.push(expr_str);
-            }
-
-            let element_ty = element_ty.ok_or(TranspileError::UnsupportedSyntax(
-                "empty array literals are not supported",
-            ))?;
-            if matches!(element_ty, GlslType::Array(_, _)) {
-                return Err(TranspileError::UnsupportedSyntax(
-                    "nested arrays are not supported",
-                ));
-            }
-
-            let len = elements.len();
-            let ctor_ty = format!("{}[{len}]", element_ty.to_glsl());
-            Ok((
-                format!("{ctor_ty}({})", elements.join(", ")),
-                GlslType::Array(Box::new(element_ty), len),
-            ))
+        syn::Expr::Repeat(repeat) => {
+            let len = ty::parse_array_len(&repeat.len)?;
+            let (expr_str, expr_ty) = generate_expr(&repeat.expr, env, registry, func_registry)?;
+            let elements = (0..len)
+                .map(|_| (expr_str.clone(), expr_ty.clone()))
+                .collect::<Vec<_>>();
+            build_array_literal(elements)
         }
 
         syn::Expr::Call(call) => {
@@ -272,4 +255,27 @@ fn expect_int_index(ty: &GlslType) -> Result<(), TranspileError> {
             "array index must be an integer",
         ))
     }
+}
+
+fn build_array_literal(
+    elements: Vec<(String, GlslType)>,
+) -> Result<(String, GlslType), TranspileError> {
+    let mut iter = elements.into_iter();
+    let (first_expr, element_ty) = iter.next().ok_or(TranspileError::UnsupportedSyntax(
+        "GLSL does not support zero-length array literals",
+    ))?;
+
+    let mut exprs = vec![first_expr];
+    for (expr_str, ty) in iter {
+        if ty != element_ty {
+            return Err(TranspileError::UnsupportedSyntax(
+                "array elements must all have the same type",
+            ));
+        }
+        exprs.push(expr_str);
+    }
+
+    let out_ty = GlslType::Array(Box::new(element_ty), exprs.len());
+    let ctor_ty = out_ty.render_return_type();
+    Ok((format!("{ctor_ty}({})", exprs.join(", ")), out_ty))
 }
