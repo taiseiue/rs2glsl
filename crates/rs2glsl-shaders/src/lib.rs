@@ -1,10 +1,10 @@
 //! シェーダーソースを Rust として型チェックするクレート。
-//! GLSL 生成: `rs2glsl crates/shader-prelude/src/lib.rs examples/type_inference.rs`
+//! GLSL 生成: `rs2glsl crates/rs2glsl-prelude/src/lib.rs examples/type_inference.rs`
 
 #![allow(unused_imports)]
 
-use shader_macro::structlayout;
-use shader_prelude::*;
+use rs2glsl_macros::structlayout;
+use rs2glsl_prelude::*;
 
 pub fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     let uv = frag_coord / resolution;

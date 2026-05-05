@@ -1,4 +1,4 @@
-use shader_prelude::*;
+use rs2glsl_prelude::*;
 
 fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     let uv = frag_coord / resolution;

@@ -959,7 +959,7 @@ impl std::error::Error for ResolveError {}
 #[cfg(test)]
 mod tests {
     use super::{read_sources, resolve_entry, ResolveConfig};
-    use shader_transpiler::transpile_to_glsl;
+    use rs2glsl_transpiler::transpile_to_glsl;
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -974,7 +974,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("time went backwards")
             .as_nanos();
-        std::env::temp_dir().join(format!("shader-solver-{name}-{nanos}.rs"))
+        std::env::temp_dir().join(format!("rs2glsl-resolver-{name}-{nanos}.rs"))
     }
 
     fn temp_dir_path(name: &str) -> PathBuf {
@@ -982,7 +982,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("time went backwards")
             .as_nanos();
-        std::env::temp_dir().join(format!("shader-solver-{name}-{nanos}"))
+        std::env::temp_dir().join(format!("rs2glsl-resolver-{name}-{nanos}"))
     }
 
     fn write_file(path: &Path, source: &str) {
@@ -1139,7 +1139,7 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         write_file(
             &entry,
             "\
-use shader_prelude::*;
+use rs2glsl_prelude::*;
 
 fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     vec4(double(time), 0.0, 0.0, 1.0)
@@ -1152,7 +1152,7 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
 version = 4
 
 [[package]]
-name = \"shader-prelude\"
+name = \"rs2glsl-prelude\"
 version = \"0.1.0\"
 source = \"git+https://github.com/taiseiue/rs2glsl#ed449fe7aac09a8df92cf4950d6f4231047269fa\"
 ",
@@ -1161,7 +1161,7 @@ source = \"git+https://github.com/taiseiue/rs2glsl#ed449fe7aac09a8df92cf4950d6f4
             &external_manifest,
             "\
 [package]
-name = \"shader-prelude\"
+name = \"rs2glsl-prelude\"
 version = \"0.1.0\"
 edition = \"2024\"
 ",
@@ -1194,7 +1194,7 @@ fn square(x: f32) -> f32 {
 
         assert!(source.contains("fn double"));
         assert!(source.contains("fn square"));
-        assert!(!source.contains("use shader_prelude::*;"));
+        assert!(!source.contains("use rs2glsl_prelude::*;"));
 
         let glsl = transpile_to_glsl(&format!("{TEST_PRELUDE}{source}")).expect("transpile failed");
         assert!(glsl.contains("float double(float x);"));

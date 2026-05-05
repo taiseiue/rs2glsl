@@ -1,6 +1,6 @@
 pub use glam::{Vec2, Vec3, Vec4};
 
-use shader_macro::builtin;
+use rs2glsl_macros::builtin;
 
 // ── 三角関数 ────────────────────────────────────────────────────────────────
 

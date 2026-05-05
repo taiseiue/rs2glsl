@@ -1,0 +1,8 @@
+[package]
+name = "rs2glsl-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rs2glsl-resolver = { version = "0.1.0", path = "../rs2glsl-resolver" }
+rs2glsl-transpiler = { version = "0.1.0", path = "../rs2glsl-transpiler" }
