@@ -231,7 +231,16 @@ impl ModuleLoader {
         included_modules: &mut HashSet<ModuleId>,
         ordered_modules: &mut Vec<ModuleId>,
     ) -> Result<(), ResolveError> {
-        self.ensure_module_loaded(module_id)?;
+        match self.ensure_module_loaded(module_id) {
+            Ok(()) => {}
+            Err(ResolveError::UnknownModule(_) | ResolveError::UnsupportedPackageSource { .. })
+                if matches!(&module_id.crate_id, CrateId::External(_))
+                    && !module_id.path.is_empty() =>
+            {
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        }
 
         if !included_modules.insert(module_id.clone()) {
             return Ok(());
@@ -532,7 +541,9 @@ fn push_named_target(
         CrateId::External(crate_name) => {
             if name == "self" {
                 out.push(ModuleId::external(crate_name, prefix));
-            } else if !prefix.is_empty() {
+            } else if prefix.is_empty() {
+                out.push(ModuleId::external(crate_name, vec![name]));
+            } else {
                 out.push(ModuleId::external(crate_name, prefix));
             }
         }
