@@ -13,11 +13,86 @@ pub fn read_sources<P: AsRef<Path>>(paths: &[P]) -> Result<String, ResolveError>
     let mut source = String::new();
 
     for path in paths {
-        let config = ResolveConfig::discover(path.as_ref())?;
-        source.push_str(&resolve_entry(path.as_ref(), &config)?);
+        let entry_path = resolve_input_path(path.as_ref())?;
+        let config = ResolveConfig::discover(&entry_path)?;
+        source.push_str(&resolve_entry(&entry_path, &config)?);
     }
 
     Ok(source)
+}
+
+fn resolve_input_path(path: &Path) -> Result<PathBuf, ResolveError> {
+    if path.is_dir() {
+        return resolve_project_entry(path);
+    }
+
+    if path.file_name().is_some_and(|name| name == "Cargo.toml") {
+        return resolve_manifest_entry(path);
+    }
+
+    Ok(path.to_path_buf())
+}
+
+fn resolve_project_entry(project_path: &Path) -> Result<PathBuf, ResolveError> {
+    let manifest_path = project_path.join("Cargo.toml");
+    if manifest_path.is_file() {
+        return resolve_manifest_entry(&manifest_path);
+    }
+
+    for candidate in default_entry_candidates(project_path) {
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    Err(ResolveError::ProjectEntryNotFound {
+        project_path: project_path.to_path_buf(),
+        manifest_path: None,
+        searched_paths: default_entry_candidates(project_path),
+    })
+}
+
+fn resolve_manifest_entry(manifest_path: &Path) -> Result<PathBuf, ResolveError> {
+    let manifest = parse_manifest(manifest_path)?;
+    let project_path = manifest_path
+        .parent()
+        .ok_or_else(|| ResolveError::MissingParent(manifest_path.to_path_buf()))?;
+
+    let bin_paths = manifest
+        .bin
+        .into_iter()
+        .filter_map(|bin| bin.path.map(|path| project_path.join(path)))
+        .collect::<Vec<_>>();
+
+    if let [bin_path] = bin_paths.as_slice() {
+        return Ok(bin_path.clone());
+    }
+
+    if bin_paths.len() > 1 {
+        return Err(ResolveError::AmbiguousBinaryTargets {
+            manifest_path: manifest_path.to_path_buf(),
+            candidates: bin_paths,
+        });
+    }
+
+    for candidate in default_entry_candidates(project_path) {
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    Err(ResolveError::ProjectEntryNotFound {
+        project_path: project_path.to_path_buf(),
+        manifest_path: Some(manifest_path.to_path_buf()),
+        searched_paths: default_entry_candidates(project_path),
+    })
+}
+
+fn default_entry_candidates(project_path: &Path) -> Vec<PathBuf> {
+    vec![
+        project_path.join("src").join("main.rs"),
+        project_path.join("main.rs"),
+    ]
 }
 
 fn resolve_entry(entry_path: &Path, config: &ResolveConfig) -> Result<String, ResolveError> {
@@ -825,6 +900,8 @@ fn find_manifest_paths(root: &Path) -> Result<Vec<PathBuf>, ResolveError> {
 struct ParsedManifest {
     package: Option<ManifestPackage>,
     lib: Option<ManifestLib>,
+    #[serde(default)]
+    bin: Vec<ManifestBin>,
 }
 
 #[derive(Deserialize)]
@@ -837,6 +914,11 @@ struct ManifestLib {
     path: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct ManifestBin {
+    path: Option<String>,
+}
+
 fn parse_manifest(path: &Path) -> Result<ParsedManifest, ResolveError> {
     let source = fs::read_to_string(path)
         .map_err(|e| ResolveError::FileRead(path.to_path_buf(), e.to_string()))?;
@@ -846,6 +928,10 @@ fn parse_manifest(path: &Path) -> Result<ParsedManifest, ResolveError> {
 #[derive(Debug)]
 pub enum ResolveError {
     AmbiguousExternalCrate(String),
+    AmbiguousBinaryTargets {
+        manifest_path: PathBuf,
+        candidates: Vec<PathBuf>,
+    },
     AmbiguousGitCheckout {
         package_name: String,
         rev: String,
@@ -878,6 +964,11 @@ pub enum ResolveError {
         searched_from: PathBuf,
     },
     Parse(PathBuf, String),
+    ProjectEntryNotFound {
+        project_path: PathBuf,
+        manifest_path: Option<PathBuf>,
+        searched_paths: Vec<PathBuf>,
+    },
     SelfReferentialModule {
         module: String,
         file_path: PathBuf,
@@ -893,8 +984,24 @@ impl fmt::Display for ResolveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::AmbiguousExternalCrate(crate_name) => {
-                write!(f, "Multiple Cargo.lock packages matched external crate `{crate_name}`")
+                write!(
+                    f,
+                    "Multiple Cargo.lock packages matched external crate `{crate_name}`"
+                )
             }
+            Self::AmbiguousBinaryTargets {
+                manifest_path,
+                candidates,
+            } => write!(
+                f,
+                "Multiple binary targets were declared in {}: {}",
+                manifest_path.display(),
+                candidates
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Self::AmbiguousGitCheckout { package_name, rev } => write!(
                 f,
                 "Multiple git checkouts matched package `{package_name}` at revision `{rev}`"
@@ -910,7 +1017,10 @@ impl fmt::Display for ResolveError {
                 second.display()
             ),
             Self::ExternalCrateNotFound(crate_name) => {
-                write!(f, "External crate `{crate_name}` was not found in Cargo.lock")
+                write!(
+                    f,
+                    "External crate `{crate_name}` was not found in Cargo.lock"
+                )
             }
             Self::FileRead(path, err) => write!(f, "File read error ({}): {err}", path.display()),
             Self::GitCheckoutNotFound {
@@ -951,6 +1061,36 @@ impl fmt::Display for ResolveError {
                 searched_from.display()
             ),
             Self::Parse(path, err) => write!(f, "Parse error ({}): {err}", path.display()),
+            Self::ProjectEntryNotFound {
+                project_path,
+                manifest_path,
+                searched_paths,
+            } => {
+                if let Some(manifest_path) = manifest_path {
+                    write!(
+                        f,
+                        "Project entry not found for {} (manifest {}). Looked for: {}",
+                        project_path.display(),
+                        manifest_path.display(),
+                        searched_paths
+                            .iter()
+                            .map(|path| path.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                } else {
+                    write!(
+                        f,
+                        "Project entry not found for {}. Looked for: {}",
+                        project_path.display(),
+                        searched_paths
+                            .iter()
+                            .map(|path| path.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                }
+            }
             Self::SelfReferentialModule { module, file_path } => write!(
                 f,
                 "Module `{module}` resolves to its own source file {}. Remove the self-referential `mod` declaration.",
@@ -969,7 +1109,7 @@ impl std::error::Error for ResolveError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{read_sources, resolve_entry, ResolveConfig};
+    use super::{ResolveConfig, read_sources, resolve_entry};
     use rs2glsl_transpiler::transpile_to_glsl;
     use std::{
         fs,
@@ -1019,6 +1159,105 @@ mod tests {
 
         fs::remove_file(first).expect("failed to remove first file");
         fs::remove_file(second).expect("failed to remove second file");
+    }
+
+    #[test]
+    fn resolves_project_directory_using_manifest_bin_path() {
+        let dir = temp_dir_path("project-dir-bin-path");
+        let manifest = dir.join("Cargo.toml");
+        let entry = dir.join("shader.rs");
+
+        write_file(
+            &manifest,
+            "\
+[package]
+name = \"shader-project\"
+version = \"0.1.0\"
+edition = \"2024\"
+
+[[bin]]
+name = \"shader-project\"
+path = \"shader.rs\"
+",
+        );
+        write_file(&entry, "fn project_entry() {}\n");
+
+        let source = read_sources(&[dir.clone()]).expect("resolve failed");
+        assert!(source.contains("fn project_entry"));
+
+        fs::remove_dir_all(dir).expect("failed to clean temp dir");
+    }
+
+    #[test]
+    fn resolves_manifest_path_using_default_src_main() {
+        let dir = temp_dir_path("manifest-src-main");
+        let manifest = dir.join("Cargo.toml");
+        let entry = dir.join("src").join("main.rs");
+
+        write_file(
+            &manifest,
+            "\
+[package]
+name = \"shader-project\"
+version = \"0.1.0\"
+edition = \"2024\"
+",
+        );
+        write_file(&entry, "fn src_main_entry() {}\n");
+
+        let source = read_sources(&[manifest]).expect("resolve failed");
+        assert!(source.contains("fn src_main_entry"));
+
+        fs::remove_dir_all(dir).expect("failed to clean temp dir");
+    }
+
+    #[test]
+    fn resolves_directory_without_manifest_using_main_rs() {
+        let dir = temp_dir_path("directory-main-rs");
+        let entry = dir.join("main.rs");
+
+        write_file(&entry, "fn directory_entry() {}\n");
+
+        let source = read_sources(&[dir.clone()]).expect("resolve failed");
+        assert!(source.contains("fn directory_entry"));
+
+        fs::remove_dir_all(dir).expect("failed to clean temp dir");
+    }
+
+    #[test]
+    fn reports_ambiguous_manifest_binary_targets() {
+        let dir = temp_dir_path("ambiguous-bin-targets");
+        let manifest = dir.join("Cargo.toml");
+        let first = dir.join("shader-a.rs");
+        let second = dir.join("shader-b.rs");
+
+        write_file(
+            &manifest,
+            "\
+[package]
+name = \"shader-project\"
+version = \"0.1.0\"
+edition = \"2024\"
+
+[[bin]]
+name = \"shader-a\"
+path = \"shader-a.rs\"
+
+[[bin]]
+name = \"shader-b\"
+path = \"shader-b.rs\"
+",
+        );
+        write_file(&first, "fn shader_a() {}\n");
+        write_file(&second, "fn shader_b() {}\n");
+
+        let err = read_sources(&[manifest]).expect_err("resolution should fail");
+        let message = err.to_string();
+        assert!(message.contains("Multiple binary targets were declared"));
+        assert!(message.contains("shader-a.rs"));
+        assert!(message.contains("shader-b.rs"));
+
+        fs::remove_dir_all(dir).expect("failed to clean temp dir");
     }
 
     #[test]

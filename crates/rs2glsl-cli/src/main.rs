@@ -3,7 +3,7 @@ use std::{env, process};
 fn main() {
     let paths = env::args().skip(1).collect::<Vec<_>>();
     if paths.is_empty() {
-        eprintln!("usage: rs2glsl-cli <file.rs> [file.rs ...]");
+        eprintln!("usage: rs2glsl-cli <path> [path ...]");
         process::exit(1);
     }
 
