@@ -224,9 +224,17 @@ pub(super) fn generate_expr(
                     Ok((format!("float({expr_str})"), GlslType::Float))
                 }
                 (GlslType::Float, GlslType::Int) => Ok((format!("int({expr_str})"), GlslType::Int)),
+                (GlslType::Uint, GlslType::Float) => {
+                    Ok((format!("float({expr_str})"), GlslType::Float))
+                }
+                (GlslType::Float, GlslType::Uint) => {
+                    Ok((format!("uint({expr_str})"), GlslType::Uint))
+                }
+                (GlslType::Int, GlslType::Uint) => Ok((format!("uint({expr_str})"), GlslType::Uint)),
+                (GlslType::Uint, GlslType::Int) => Ok((format!("int({expr_str})"), GlslType::Int)),
                 (src, dst) if src == dst => Ok((expr_str, target_ty)),
                 _ => Err(TranspileError::UnsupportedSyntax(
-                    "unsupported cast; only int <-> float casts are supported",
+                    "unsupported cast; only int/uint/float scalar casts are supported",
                 )),
             }
         }
@@ -234,6 +242,9 @@ pub(super) fn generate_expr(
         syn::Expr::Unary(u) => {
             let (inner, inner_ty) = generate_expr(&u.expr, env, registry, func_registry)?;
             match &u.op {
+                syn::UnOp::Neg(_) if matches!(inner_ty.primitive(), GlslType::Uint) => Err(
+                    TranspileError::UnsupportedSyntax("cannot negate a uint"),
+                ),
                 syn::UnOp::Neg(_) => Ok((format!("(-{inner})"), inner_ty)),
                 syn::UnOp::Not(_) => Ok((format!("(!{inner})"), GlslType::Bool)),
                 syn::UnOp::Deref(_) => Ok((inner, inner_ty)), // *x → x（deref を透過）
@@ -243,7 +254,10 @@ pub(super) fn generate_expr(
 
         syn::Expr::Lit(lit) => match &lit.lit {
             syn::Lit::Float(f) => Ok((f.to_string(), GlslType::Float)),
-            syn::Lit::Int(i) => Ok((i.to_string(), GlslType::Int)),
+            syn::Lit::Int(i) => {
+                let (literal, ty) = normalize_int_literal(i)?;
+                Ok((literal, ty))
+            }
             syn::Lit::Bool(b) => Ok((b.value.to_string(), GlslType::Bool)),
             _ => Err(TranspileError::UnsupportedSyntax("literal kind")),
         },
@@ -376,18 +390,19 @@ pub(super) fn infer_expr_type(
             let expr_ty = infer_expr_type(&cast.expr, env, registry, func_registry)?;
             let target_ty = ty::parse_type(&cast.ty, registry, &Default::default())?;
             match (expr_ty.primitive(), target_ty.primitive()) {
-                (GlslType::Int, GlslType::Float) | (GlslType::Float, GlslType::Int) => {
-                    Ok(target_ty)
-                }
                 (src, dst) if src == dst => Ok(target_ty),
+                (src, dst) if ty::can_cast_scalar(src, dst) => Ok(target_ty),
                 _ => Err(TranspileError::UnsupportedSyntax(
-                    "unsupported cast; only int <-> float casts are supported",
+                    "unsupported cast; only int/uint/float scalar casts are supported",
                 )),
             }
         }
         syn::Expr::Unary(u) => {
             let inner_ty = infer_expr_type(&u.expr, env, registry, func_registry)?;
             match &u.op {
+                syn::UnOp::Neg(_) if matches!(inner_ty.primitive(), GlslType::Uint) => Err(
+                    TranspileError::UnsupportedSyntax("cannot negate a uint"),
+                ),
                 syn::UnOp::Neg(_) | syn::UnOp::Deref(_) => Ok(inner_ty),
                 syn::UnOp::Not(_) => Ok(GlslType::Bool),
                 _ => Err(TranspileError::UnsupportedSyntax("unary operator")),
@@ -395,7 +410,7 @@ pub(super) fn infer_expr_type(
         }
         syn::Expr::Lit(lit) => match &lit.lit {
             syn::Lit::Float(_) => Ok(GlslType::Float),
-            syn::Lit::Int(_) => Ok(GlslType::Int),
+            syn::Lit::Int(i) => Ok(normalize_int_literal(i)?.1),
             syn::Lit::Bool(_) => Ok(GlslType::Bool),
             _ => Err(TranspileError::UnsupportedSyntax("literal kind")),
         },
@@ -413,7 +428,7 @@ pub(super) fn extract_ident(pat: &syn::Pat) -> Result<String, TranspileError> {
 }
 
 fn expect_int_index(ty: &GlslType) -> Result<(), TranspileError> {
-    if matches!(ty.primitive(), GlslType::Int) {
+    if ty.is_integer() {
         Ok(())
     } else {
         Err(TranspileError::UnsupportedSyntax(
@@ -459,5 +474,39 @@ fn reject_array_compound_assign(ty: &GlslType) -> Result<(), TranspileError> {
         ))
     } else {
         Ok(())
+    }
+}
+
+pub(super) fn coerce_expression_to_type(
+    expr_str: String,
+    expr_ty: &GlslType,
+    target_ty: &GlslType,
+) -> Result<String, TranspileError> {
+    if expr_ty == target_ty || expr_ty.primitive() == target_ty.primitive() {
+        return Ok(expr_str);
+    }
+
+    if ty::can_cast_scalar(expr_ty, target_ty) {
+        return Ok(format!("{}({expr_str})", target_ty.to_glsl()));
+    }
+
+    Err(TranspileError::UnsupportedSyntax(
+        "expression type does not match target type",
+    ))
+}
+
+fn normalize_int_literal(lit: &syn::LitInt) -> Result<(String, GlslType), TranspileError> {
+    let suffix = lit.suffix();
+    let mut raw = lit.to_string();
+    if !suffix.is_empty() {
+        raw.truncate(raw.len() - suffix.len());
+    }
+
+    match suffix {
+        "" | "i32" => Ok((raw, GlslType::Int)),
+        "u32" => Ok((format!("{raw}u"), GlslType::Uint)),
+        _ => Err(TranspileError::UnsupportedSyntax(
+            "unsupported integer literal suffix",
+        )),
     }
 }

@@ -2,6 +2,7 @@
 pub enum GlslType {
     Bool,
     Int,
+    Uint,
     Float,
     Vec2,
     Vec3,
@@ -16,6 +17,7 @@ impl GlslType {
         match self {
             GlslType::Bool => "bool",
             GlslType::Int => "int",
+            GlslType::Uint => "uint",
             GlslType::Float => "float",
             GlslType::Vec2 => "vec2",
             GlslType::Vec3 => "vec3",
@@ -59,5 +61,13 @@ impl GlslType {
             GlslType::Builtin(_, underlying) => underlying.array_element(),
             _ => None,
         }
+    }
+
+    pub fn is_integer(&self) -> bool {
+        matches!(self.primitive(), GlslType::Int | GlslType::Uint)
+    }
+
+    pub fn is_scalar_numeric(&self) -> bool {
+        matches!(self.primitive(), GlslType::Int | GlslType::Uint | GlslType::Float)
     }
 }

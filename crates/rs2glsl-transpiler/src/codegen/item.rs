@@ -1,4 +1,4 @@
-use super::expr::{extract_ident, generate_expr};
+use super::expr::{coerce_expression_to_type, extract_ident, generate_expr};
 use super::stmt::generate_block;
 use super::structs::StructRegistry;
 use super::ty::{parse_param_type, parse_type};
@@ -21,7 +21,8 @@ pub(super) fn generate_const(
 ) -> Result<(String, GlslType), TranspileError> {
     let name = item.ident.to_string();
     let ty = parse_type(&item.ty, registry, aliases)?;
-    let (expr_str, _) = generate_expr(&item.expr, env, registry, func_registry)?;
+    let (expr_str, expr_ty) = generate_expr(&item.expr, env, registry, func_registry)?;
+    let expr_str = coerce_expression_to_type(expr_str, &expr_ty, &ty)?;
     Ok((
         format!("const {} = {expr_str};\n", ty.render_decl(&name)),
         ty,
@@ -49,13 +50,17 @@ pub(super) fn generate_function(
 ) -> Result<String, TranspileError> {
     let mut env = global_env.clone();
     let (params, ret) = build_function_signature(func, registry, aliases)?;
+    let ret_ty = match &func.sig.output {
+        syn::ReturnType::Type(_, ty) => Some(parse_type(ty, registry, aliases)?),
+        syn::ReturnType::Default => None,
+    };
     for param in &params {
         env.insert(param.name.clone(), param.ty.clone());
     }
     let args = format_function_params(&params);
-    let tail = match &func.sig.output {
-        syn::ReturnType::Type(_, _) => Tail::Return,
-        syn::ReturnType::Default => Tail::Discard,
+    let tail = match ret_ty.as_ref() {
+        Some(ty) => Tail::Return(ty),
+        None => Tail::Discard,
     };
     let mut temp_counter = 0;
 

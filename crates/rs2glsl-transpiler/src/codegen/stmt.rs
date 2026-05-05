@@ -1,4 +1,4 @@
-use super::expr::{extract_ident, generate_expr, infer_expr_type};
+use super::expr::{coerce_expression_to_type, extract_ident, generate_expr, infer_expr_type};
 use super::structs::StructRegistry;
 use super::ty::{self, parse_type};
 use super::{FuncRegistry, Tail, TypeAliasMap, TypeEnv};
@@ -61,7 +61,9 @@ pub(super) fn generate_block(
                             temp_counter,
                         )?);
                     } else {
-                        let (expr_str, _) = generate_expr(init_expr, env, registry, func_registry)?;
+                        let (expr_str, expr_ty) =
+                            generate_expr(init_expr, env, registry, func_registry)?;
+                        let expr_str = coerce_expression_to_type(expr_str, &expr_ty, &ty)?;
                         out.push_str(&format!("{} = {expr_str};\n", ty.render_decl(&name)));
                     }
                 }
@@ -119,8 +121,8 @@ pub(super) fn generate_block(
     Ok(out)
 }
 
-fn expect_int(ty: &GlslType, context: &'static str) -> Result<(), TranspileError> {
-    if matches!(ty.primitive(), GlslType::Int) {
+fn expect_integer(ty: &GlslType, context: &'static str) -> Result<(), TranspileError> {
+    if ty.is_integer() {
         Ok(())
     } else {
         Err(TranspileError::UnsupportedSyntax(context))
@@ -157,8 +159,18 @@ pub(super) fn generate_for(
 
     let (start_str, start_ty) = generate_expr(start_expr, env, registry, func_registry)?;
     let (end_str, end_ty) = generate_expr(end_expr, env, registry, func_registry)?;
-    expect_int(&start_ty, "for loop start bound must be an integer")?;
-    expect_int(&end_ty, "for loop end bound must be an integer")?;
+    expect_integer(&start_ty, "for loop start bound must be an integer")?;
+    expect_integer(&end_ty, "for loop end bound must be an integer")?;
+    let loop_ty = if matches!(
+        (start_ty.primitive(), end_ty.primitive()),
+        (GlslType::Uint, _) | (_, GlslType::Uint)
+    ) {
+        GlslType::Uint
+    } else {
+        GlslType::Int
+    };
+    let start_str = coerce_expression_to_type(start_str, &start_ty, &loop_ty)?;
+    let end_str = coerce_expression_to_type(end_str, &end_ty, &loop_ty)?;
 
     let cond_op = match range.limits {
         syn::RangeLimits::HalfOpen(_) => "<",
@@ -166,7 +178,7 @@ pub(super) fn generate_for(
     };
 
     let mut loop_env = env.clone();
-    loop_env.insert(loop_var.clone(), GlslType::Int);
+    loop_env.insert(loop_var.clone(), loop_ty.clone());
     let body = generate_block(
         &for_loop.body,
         &mut loop_env,
@@ -178,7 +190,8 @@ pub(super) fn generate_for(
     )?;
 
     Ok(format!(
-        "for (int {loop_var} = {start_str}; {loop_var} {cond_op} {end_str}; {loop_var}++) {{\n{body}}}\n"
+        "for ({} {loop_var} = {start_str}; {loop_var} {cond_op} {end_str}; {loop_var}++) {{\n{body}}}\n",
+        loop_ty.to_glsl()
     ))
 }
 
@@ -294,8 +307,10 @@ fn generate_statement_expr(
                     temp_counter,
                 )
             } else {
-                let (expr_str, _) = generate_expr(expr, env, registry, func_registry)?;
-                Ok(format!("{expr_str};\n"))
+                let lhs = generate_assignment_lhs(&assign.left, env, registry, func_registry)?;
+                let (rhs_str, rhs_ty) = generate_expr(&assign.right, env, registry, func_registry)?;
+                let rhs_str = coerce_expression_to_type(rhs_str, &rhs_ty, &lhs_ty)?;
+                Ok(format!("{lhs} = {rhs_str};\n"))
             }
         }
         syn::Expr::Binary(bin) => {
@@ -320,6 +335,19 @@ fn generate_statement_expr(
                         temp_counter,
                     )
                 }
+                syn::BinOp::AddAssign(_)
+                | syn::BinOp::SubAssign(_)
+                | syn::BinOp::MulAssign(_)
+                | syn::BinOp::DivAssign(_) => {
+                    let lhs = generate_assignment_lhs(&bin.left, env, registry, func_registry)?;
+                    let (rhs_str, rhs_ty) =
+                        generate_expr(&bin.right, env, registry, func_registry)?;
+                    let rhs_str = coerce_expression_to_type(rhs_str, &rhs_ty, &lhs_ty)?;
+                    Ok(format!(
+                        "({lhs} {}= {rhs_str});\n",
+                        binary_operator_token(&bin.op)?
+                    ))
+                }
                 _ => {
                     let (expr_str, _) = generate_expr(expr, env, registry, func_registry)?;
                     Ok(format!("{expr_str};\n"))
@@ -343,7 +371,7 @@ fn generate_tail_expr(
 ) -> Result<String, TranspileError> {
     let expr_ty = infer_expr_type(expr, env, registry, func_registry)?;
     match tail {
-        Tail::Return if matches!(expr_ty, GlslType::Array(_, _)) => {
+        Tail::Return(_) if matches!(expr_ty, GlslType::Array(_, _)) => {
             let temp_name = next_temp_name(temp_counter);
             let mut out = format!("{};\n", expr_ty.render_decl(&temp_name));
             out.push_str(&emit_expr_into_target(
@@ -373,12 +401,14 @@ fn generate_tail_expr(
                     temp_counter,
                 )
             } else {
-                let (expr_str, _) = generate_expr(expr, env, registry, func_registry)?;
+                let (expr_str, expr_ty) = generate_expr(expr, env, registry, func_registry)?;
+                let expr_str = coerce_expression_to_type(expr_str, &expr_ty, target_ty)?;
                 Ok(format!("{name} = {expr_str};\n"))
             }
         }
-        Tail::Return => {
-            let (expr_str, _) = generate_expr(expr, env, registry, func_registry)?;
+        Tail::Return(target_ty) => {
+            let (expr_str, expr_ty) = generate_expr(expr, env, registry, func_registry)?;
+            let expr_str = coerce_expression_to_type(expr_str, &expr_ty, target_ty)?;
             Ok(format!("return {expr_str};\n"))
         }
         Tail::Discard => {
@@ -440,7 +470,9 @@ fn emit_expr_into_target_with_indices(
             ))
         }
         _ => {
-            let (expr_str, _) = render_indexed_expr(expr, indices, env, registry, func_registry)?;
+            let (expr_str, expr_ty) =
+                render_indexed_expr(expr, indices, env, registry, func_registry)?;
+            let expr_str = coerce_expression_to_type(expr_str, &expr_ty, target_ty)?;
             Ok(format!("{target} = {expr_str};\n"))
         }
     }

@@ -21,7 +21,7 @@ struct FuncAttrs {
 
 #[derive(Clone, Copy)]
 enum Tail<'a> {
-    Return,
+    Return(&'a GlslType),
     Assign(&'a str),
     Discard,
 }

@@ -37,6 +37,7 @@ pub(super) fn parse_type(
     match ident.to_string().as_str() {
         "bool" => Ok(GlslType::Bool),
         "i32" => Ok(GlslType::Int),
+        "u32" => Ok(GlslType::Uint),
         "f32" => Ok(GlslType::Float),
         "Vec2" => Ok(GlslType::Vec2),
         "Vec3" => Ok(GlslType::Vec3),
@@ -129,12 +130,25 @@ fn infer_scalar_or_vector_arithmetic_type(
 ) -> Result<GlslType, TranspileError> {
     match (left.primitive(), right.primitive()) {
         (GlslType::Int, GlslType::Int) => Ok(GlslType::Int),
+        (GlslType::Uint, GlslType::Uint) => Ok(GlslType::Uint),
         (GlslType::Float, GlslType::Float) => Ok(GlslType::Float),
         (GlslType::Float, GlslType::Int) => Ok(GlslType::Float),
         (GlslType::Int, GlslType::Float) => Ok(GlslType::Float),
-        (vec, GlslType::Float) => Ok(vec.clone()),
-        (GlslType::Float, vec) => Ok(vec.clone()),
-        (a, _) => Ok(a.clone()),
+        (GlslType::Vec2, GlslType::Vec2) => Ok(GlslType::Vec2),
+        (GlslType::Vec3, GlslType::Vec3) => Ok(GlslType::Vec3),
+        (GlslType::Vec4, GlslType::Vec4) => Ok(GlslType::Vec4),
+        (GlslType::Vec2, GlslType::Float) | (GlslType::Float, GlslType::Vec2) => {
+            Ok(GlslType::Vec2)
+        }
+        (GlslType::Vec3, GlslType::Float) | (GlslType::Float, GlslType::Vec3) => {
+            Ok(GlslType::Vec3)
+        }
+        (GlslType::Vec4, GlslType::Float) | (GlslType::Float, GlslType::Vec4) => {
+            Ok(GlslType::Vec4)
+        }
+        _ => Err(TranspileError::UnsupportedSyntax(
+            "arithmetic operands must have compatible numeric types",
+        )),
     }
 }
 
@@ -161,4 +175,20 @@ pub(super) fn infer_swizzle_type(member: &str) -> Result<GlslType, TranspileErro
             "swizzle length exceeds 4",
         )),
     }
+}
+
+pub(super) fn can_cast_scalar(from: &GlslType, to: &GlslType) -> bool {
+    if !from.is_scalar_numeric() || !to.is_scalar_numeric() {
+        return false;
+    }
+
+    matches!(
+        (from.primitive(), to.primitive()),
+        (GlslType::Int, GlslType::Float)
+            | (GlslType::Float, GlslType::Int)
+            | (GlslType::Uint, GlslType::Float)
+            | (GlslType::Float, GlslType::Uint)
+            | (GlslType::Int, GlslType::Uint)
+            | (GlslType::Uint, GlslType::Int)
+    )
 }

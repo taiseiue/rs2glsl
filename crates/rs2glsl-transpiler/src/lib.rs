@@ -692,6 +692,83 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         assert!(out.contains("int y = x;"));
     }
 
+    #[test]
+    fn uint_scalar_types_and_literals_are_emitted() {
+        let out = glsl(
+            "\
+const COUNT: u32 = 1u32;
+fn bump(x: u32) -> u32 {
+    let y: u32 = 1;
+    x + y + COUNT
+}
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let count = bump(2u32);
+    vec4(count as f32, 0.0, 0.0, 1.0)
+}",
+        );
+        assert!(out.contains("const uint COUNT = 1u;"));
+        assert!(out.contains("uint bump(uint x);"));
+        assert!(out.contains("uint y = uint(1);"));
+        assert!(out.contains("return ((x + y) + COUNT);"));
+        assert!(out.contains("uint count = bump(2u);"));
+        assert!(out.contains("return vec4(float(count), 0.0, 0.0, 1.0);"));
+    }
+
+    #[test]
+    fn uint_for_loop_and_index_are_emitted() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let weights: [f32; 3] = [1.0, 2.0, 3.0];
+    let idx: u32 = 1u32;
+    let hit = 0.0;
+    for i in 0u32..3u32 {
+        if i == idx {
+            hit = weights[i];
+        }
+    }
+    vec4(hit, 0.0, 0.0, 1.0)
+}",
+        );
+        assert!(out.contains("uint idx = 1u;"));
+        assert!(out.contains("float hit = 0.0;"));
+        assert!(out.contains("for (uint i = 0u; i < 3u; i++)"));
+        assert!(out.contains("if ((i == idx))"));
+        assert!(out.contains("hit = weights[i];"));
+        assert!(out.contains("return vec4(hit, 0.0, 0.0, 1.0);"));
+    }
+
+    #[test]
+    fn uint_assignments_and_compound_assignments_are_coerced() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let mut count: u32 = 1;
+    count = 2;
+    count += 3;
+    vec4(count as f32, 0.0, 0.0, 1.0)
+}",
+        );
+        assert!(out.contains("uint count = uint(1);"));
+        assert!(out.contains("count = uint(2);"));
+        assert!(out.contains("(count += uint(3));"));
+        assert!(out.contains("return vec4(float(count), 0.0, 0.0, 1.0);"));
+    }
+
+    #[test]
+    fn int_to_uint_cast_uses_glsl_constructor() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let x = 2;
+    let y = x as u32;
+    vec4(y as f32, 0.0, 0.0, 1.0)
+}",
+        );
+        assert!(out.contains("uint y = uint(x);"));
+        assert!(out.contains("return vec4(float(y), 0.0, 0.0, 1.0);"));
+    }
+
     // ── エラー系 ──────────────────────────────────────────────────────────
 
     #[test]
@@ -778,8 +855,43 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         assert!(matches!(
             err,
             TranspileError::UnsupportedSyntax(
-                "unsupported cast; only int <-> float casts are supported"
+                "unsupported cast; only int/uint/float scalar casts are supported"
             )
+        ));
+        assert_eq!(err.code(), "E0005");
+    }
+
+    #[test]
+    fn error_mixed_int_and_uint_arithmetic_is_rejected() {
+        let err = transpile(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let x: u32 = 1u32;
+    let y = x + 1;
+    vec4(y as f32, 0.0, 0.0, 1.0)
+}",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            TranspileError::UnsupportedSyntax("arithmetic operands must have compatible numeric types")
+        ));
+        assert_eq!(err.code(), "E0005");
+    }
+
+    #[test]
+    fn error_uint_negation_is_rejected() {
+        let err = transpile(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let x: u32 = 1u32;
+    vec4((-x) as f32, 0.0, 0.0, 1.0)
+}",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            TranspileError::UnsupportedSyntax("cannot negate a uint")
         ));
         assert_eq!(err.code(), "E0005");
     }
