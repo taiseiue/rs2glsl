@@ -1,13 +1,13 @@
 const PI: f32 = 3.14159265359;
 const TAU: f32 = 6.28318530718;
 
-#[repr(vec2)]
+#[structlayout(vec2)]
 struct Point {
     x: f32,
     y: f32,
 }
 
-#[repr(vec3)]
+#[structlayout(vec3)]
 struct Color {
     r: f32,
     g: f32,

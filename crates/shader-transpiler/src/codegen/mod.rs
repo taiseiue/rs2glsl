@@ -130,6 +130,19 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
 
     // 関数シグネチャ
     let mut func_registry = FuncRegistry::new();
+    for (key, glsl_name, ty) in [
+        ("Vec2::new", "vec2", GlslType::Vec2),
+        ("Vec3::new", "vec3", GlslType::Vec3),
+        ("Vec4::new", "vec4", GlslType::Vec4),
+    ] {
+        func_registry.insert(
+            key.to_string(),
+            FuncAttrs {
+                glsl_name: glsl_name.to_string(),
+                return_type: Some(ty),
+            },
+        );
+    }
     for node in &file.items {
         if let Item::Fn(func) = node {
             let fn_name = func.sig.ident.to_string();

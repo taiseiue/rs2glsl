@@ -33,8 +33,20 @@ fn preprocess(source: &str) -> String {
 mod tests {
     use super::*;
 
+    // テスト用ミニマルプリルード。#[builtin] 関数はGLSL出力に影響しない。
+    const TEST_PRELUDE: &str = concat!(
+        "#[builtin(\"vec2\")] fn vec2(x: f32, y: f32) -> Vec2 {}\n",
+        "#[builtin(\"vec3\")] fn vec3(x: f32, y: f32, z: f32) -> Vec3 {}\n",
+        "#[builtin(\"vec4\")] fn vec4(x: f32, y: f32, z: f32, w: f32) -> Vec4 {}\n",
+        "#[builtin(\"sin\")] fn sin(x: f32) -> f32 {}\n",
+    );
+
+    fn transpile(src: &str) -> Result<String, TranspileError> {
+        transpile_to_glsl(&format!("{TEST_PRELUDE}{src}"))
+    }
+
     fn glsl(src: &str) -> String {
-        transpile_to_glsl(src).expect("transpile failed")
+        transpile(src).expect("transpile failed")
     }
 
     // ── 正常系 ────────────────────────────────────────────────────────────
@@ -159,7 +171,7 @@ fn step(edge: f32, x: f32) -> f32 {
     fn struct_maps_to_glsl_constructor() {
         let out = glsl(
             "\
-#[repr(vec4)]
+#[structlayout(vec4)]
 struct Color { r: f32, g: f32, b: f32, a: f32 }
 fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     Color { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
@@ -501,7 +513,7 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 { vec4(1.0,
 
     #[test]
     fn error_for_loop_iterable_must_be_range() {
-        let err = transpile_to_glsl(
+        let err = transpile(
             "\
 fn ints() -> i32 { 3 }
 fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
@@ -522,7 +534,7 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
 
     #[test]
     fn error_for_loop_bounds_must_be_integers() {
-        let err = transpile_to_glsl(
+        let err = transpile(
             "\
 fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     let acc = vec4(0.0, 0.0, 0.0, 1.0);
@@ -542,7 +554,7 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
 
     #[test]
     fn error_cast_outside_int_float_pair() {
-        let err = transpile_to_glsl(
+        let err = transpile(
             "\
 fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     let flag = true;

@@ -38,5 +38,5 @@ fn main() {
 
     let col = pixel(frag_coord, res, spec, time);
 
-    frag_color = vec4(col.r, col.g, col.b, 1.0);
+    frag_color = Vec4::new(col.r, col.g, col.b, 1.0);
 }

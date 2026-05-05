@@ -1,4 +1,4 @@
-#[repr(vec4)]
+#[structlayout(vec4)]
 struct Color {
     #[component(0)]
     r: f32,
@@ -10,7 +10,7 @@ struct Color {
     a: f32,
 }
 
-#[repr(vec2)]
+#[structlayout(vec2)]
 struct Uv {
     s: f32,
     t: f32,

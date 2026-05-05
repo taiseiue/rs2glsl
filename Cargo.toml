@@ -2,10 +2,14 @@
 name = "rs2glsl"
 version = "0.1.0"
 edition = "2024"
+autoexamples = false
 [workspace]
 members = [
+  "crates/shader-macro",
+  "crates/shader-prelude",
   "crates/shader-transpiler",
-  "crates/shader-cli"
+  "crates/shader-cli",
+  "crates/shaders", "tmp/my_vj",
 ]
 resolver = "2"
 

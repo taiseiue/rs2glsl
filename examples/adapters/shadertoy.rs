@@ -1,5 +1,5 @@
 #[builtin("iResolution")]
-static i_resolution: Vec3 = vec3();
+static i_resolution: Vec3 = Vec3::new(0.0, 0.0, 0.0);
 
 #[builtin("iTime")]
 static i_time: f32 = 0.0;
@@ -23,5 +23,5 @@ fn mainImage(frag_color: &mut Vec4, frag_coord: Vec2) {
 
     let col = pixel(p, res, spec, i_time);
 
-    *frag_color = vec4(col.r, col.g, col.b, 1.0);
+    *frag_color = Vec4::new(col.r, col.g, col.b, 1.0);
 }

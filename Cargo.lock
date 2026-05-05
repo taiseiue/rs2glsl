@@ -3,6 +3,12 @@
 version = 4
 
 [[package]]
+name = "glam"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "779ae4bf7e8421cf91c0b3b64e7e8b40b862fba4d393f59150042de7c4965a94"
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -32,6 +38,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "shader-macro"
+version = "0.1.0"
+
+[[package]]
+name = "shader-prelude"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "shader-macro",
+]
+
+[[package]]
 name = "shader-transpiler"
 version = "0.1.0"
 dependencies = [
@@ -39,6 +57,14 @@ dependencies = [
  "quote",
  "syn",
  "thiserror",
+]
+
+[[package]]
+name = "shaders"
+version = "0.1.0"
+dependencies = [
+ "shader-macro",
+ "shader-prelude",
 ]
 
 [[package]]

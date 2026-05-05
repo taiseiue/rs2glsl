@@ -12,11 +12,14 @@ pub enum TranspileError {
     #[error("Unsupported syntax: {0}")]
     UnsupportedSyntax(&'static str),
 
-    #[error("struct `{0}` requires a #[repr(vec2|vec3|vec4)] attribute")]
+    #[error("struct `{0}` requires a #[structlayout(vec2|vec3|vec4)] attribute")]
     MissingReprAttr(String),
 
     #[error("Parse error: {0}")]
     ParseError(String),
+
+    #[error("Undefined function: `{0}` — declare it with #[builtin(\"glsl_name\")] fn {0}(...)")]
+    UndefinedFunction(String),
 }
 
 impl TranspileError {
@@ -28,6 +31,7 @@ impl TranspileError {
             Self::UnsupportedSyntax(_) => "E0005",
             Self::MissingReprAttr(_) => "E0006",
             Self::ParseError(_) => "E0007",
+            Self::UndefinedFunction(_) => "E0008",
         }
     }
 }

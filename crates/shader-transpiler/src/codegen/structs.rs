@@ -19,16 +19,16 @@ pub(super) fn parse_struct(item: &syn::ItemStruct) -> Result<(String, StructDef)
 
 fn parse_repr_attr(item: &syn::ItemStruct) -> Result<GlslType, TranspileError> {
     for attr in &item.attrs {
-        if attr.path().is_ident("repr") {
+        if attr.path().is_ident("structlayout") {
             let ident: syn::Ident = attr
                 .parse_args()
-                .map_err(|_| TranspileError::UnsupportedSyntax("#[repr] requires a type name"))?;
+                .map_err(|_| TranspileError::UnsupportedSyntax("#[structlayout] requires a type name"))?;
             return match ident.to_string().as_str() {
                 "vec2" => Ok(GlslType::Vec2),
                 "vec3" => Ok(GlslType::Vec3),
                 "vec4" => Ok(GlslType::Vec4),
                 _ => Err(TranspileError::UnsupportedSyntax(
-                    "#[repr] must be vec2, vec3, or vec4",
+                    "#[structlayout] must be vec2, vec3, or vec4",
                 )),
             };
         }

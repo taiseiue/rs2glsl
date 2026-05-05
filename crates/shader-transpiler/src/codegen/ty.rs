@@ -1,5 +1,5 @@
 use super::structs::StructRegistry;
-use super::{FuncRegistry, TypeAliasMap};
+use super::TypeAliasMap;
 use crate::errors::TranspileError;
 use crate::types::GlslType;
 
@@ -60,33 +60,6 @@ pub(super) fn infer_binop_type(left: &GlslType, right: &GlslType) -> GlslType {
     }
 }
 
-pub(super) fn infer_call_type(
-    func: &str,
-    arg_types: &[GlslType],
-    func_registry: &FuncRegistry,
-) -> GlslType {
-    let first = || {
-        arg_types
-            .first()
-            .map(|t| t.primitive().clone())
-            .unwrap_or(GlslType::Float)
-    };
-    match func {
-        "vec2" => GlslType::Vec2,
-        "vec3" => GlslType::Vec3,
-        "vec4" => GlslType::Vec4,
-        "cross" => GlslType::Vec3,
-        "length" | "dot" | "distance" => GlslType::Float,
-        "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "sqrt" | "inversesqrt" | "abs"
-        | "sign" | "floor" | "ceil" | "fract" | "round" | "exp" | "log" | "exp2" | "log2"
-        | "radians" | "degrees" | "normalize" | "reflect" | "refract" | "min" | "max" | "mod"
-        | "pow" | "mix" | "clamp" | "smoothstep" => first(),
-        name => func_registry
-            .get(name)
-            .and_then(|attrs| attrs.return_type.clone())
-            .unwrap_or(GlslType::Float),
-    }
-}
 
 pub(super) fn infer_swizzle_type(member: &str) -> Result<GlslType, TranspileError> {
     match member.len() {

@@ -39,22 +39,31 @@ pub(super) fn generate_expr(
 
         syn::Expr::Call(call) => {
             let func_name = match &*call.func {
-                syn::Expr::Path(p) => p.path.segments.last().unwrap().ident.to_string(),
+                syn::Expr::Path(p) => p
+                    .path
+                    .segments
+                    .iter()
+                    .map(|s| s.ident.to_string())
+                    .collect::<Vec<_>>()
+                    .join("::"),
                 _ => return Err(TranspileError::UnsupportedSyntax("non-path function call")),
             };
 
-            let args_and_types = call
+            let (arg_strs, _): (Vec<_>, Vec<_>) = call
                 .args
                 .iter()
                 .map(|a| generate_expr(a, env, registry, func_registry))
-                .collect::<Result<Vec<_>, _>>()?;
-            let (arg_strs, arg_types): (Vec<_>, Vec<_>) = args_and_types.into_iter().unzip();
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .unzip();
 
-            let glsl_name = func_registry
+            let attrs = func_registry
                 .get(&func_name)
-                .map(|attrs| attrs.glsl_name.as_str())
-                .unwrap_or(&func_name);
-            let out_ty = ty::infer_call_type(&func_name, &arg_types, func_registry);
+                .ok_or_else(|| TranspileError::UndefinedFunction(func_name.clone()))?;
+            let glsl_name = &attrs.glsl_name;
+            // void 関数（return_type: None）を式として使った場合は Float で代替
+            let out_ty = attrs.return_type.clone().unwrap_or(GlslType::Float);
+
             Ok((format!("{glsl_name}({})", arg_strs.join(", ")), out_ty))
         }
 
