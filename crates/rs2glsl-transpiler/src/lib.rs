@@ -469,6 +469,24 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     }
 
     #[test]
+    fn array_return_type_is_emitted_with_size() {
+        let out = glsl(
+            "\
+fn weights() -> [f32; 3] {
+    [1.0, 2.0, 3.0]
+}
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let values = weights();
+    vec4(values[0], values[1], values[2], 1.0)
+}",
+        );
+        assert!(out.contains("float[3] weights();"));
+        assert!(out.contains("float[3] weights() {"));
+        assert!(out.contains("return float[3](1.0, 2.0, 3.0);"));
+        assert!(out.contains("float values[3] = weights();"));
+    }
+
+    #[test]
     fn array_index_assignment_keeps_subscript_on_lhs() {
         let out = glsl(
             "\

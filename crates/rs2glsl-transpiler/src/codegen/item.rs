@@ -92,7 +92,7 @@ fn build_function_signature(
         .collect::<Result<Vec<_>, _>>()?;
 
     let ret = match &func.sig.output {
-        syn::ReturnType::Type(_, ty) => render_return_type(&parse_type(ty, registry, aliases)?)?,
+        syn::ReturnType::Type(_, ty) => parse_type(ty, registry, aliases)?.render_return_type(),
         syn::ReturnType::Default => "void".to_string(),
     };
 
@@ -108,14 +108,4 @@ fn format_function_params(params: &[FunctionParam]) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-fn render_return_type(ty: &GlslType) -> Result<String, TranspileError> {
-    if matches!(ty, GlslType::Array(_, _)) {
-        Err(TranspileError::UnsupportedSyntax(
-            "array return types are not supported",
-        ))
-    } else {
-        Ok(ty.to_glsl().to_string())
-    }
 }

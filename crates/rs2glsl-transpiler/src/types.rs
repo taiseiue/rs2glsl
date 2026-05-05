@@ -35,6 +35,15 @@ impl GlslType {
         }
     }
 
+    pub fn render_return_type(&self) -> String {
+        match self {
+            GlslType::Array(inner, len) => format!("{}[{len}]", inner.to_glsl()),
+            GlslType::Struct(_, underlying) => underlying.render_return_type(),
+            GlslType::Builtin(_, underlying) => underlying.render_return_type(),
+            _ => self.to_glsl().to_string(),
+        }
+    }
+
     pub fn primitive(&self) -> &GlslType {
         match self {
             GlslType::Struct(_, u) => u.primitive(),
