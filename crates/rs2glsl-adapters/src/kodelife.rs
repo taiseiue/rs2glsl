@@ -1,4 +1,4 @@
-use rs2glsl_macros::{glsl_name, builtin, uniform, out};
+use rs2glsl_macros::{builtin, glsl_name, out, uniform};
 use rs2glsl_prelude::*;
 
 #[uniform]

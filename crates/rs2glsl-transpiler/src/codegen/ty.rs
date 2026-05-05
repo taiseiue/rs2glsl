@@ -1,5 +1,5 @@
-use super::structs::StructRegistry;
 use super::TypeAliasMap;
+use super::structs::StructRegistry;
 use crate::errors::TranspileError;
 use crate::types::GlslType;
 
@@ -59,7 +59,6 @@ pub(super) fn infer_binop_type(left: &GlslType, right: &GlslType) -> GlslType {
         (a, _) => a.clone(),
     }
 }
-
 
 pub(super) fn infer_swizzle_type(member: &str) -> Result<GlslType, TranspileError> {
     match member.len() {

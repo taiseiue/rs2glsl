@@ -1,4 +1,4 @@
-use rs2glsl_macros::{buildin};
+use rs2glsl_macros::buildin;
 use rs2glsl_prelude::*;
 
 #[builtin("iResolution")]

@@ -1,4 +1,4 @@
-use rs2glsl_macros::{structlayout};
+use rs2glsl_macros::structlayout;
 use rs2glsl_prelude::*;
 
 pub const PI: f32 = 3.14159265359;
@@ -71,7 +71,6 @@ pub fn hash22(p: Point) -> Point {
     }
 }
 
-
 pub fn rotate(p: Point, angle: f32) -> Point {
     let c = cos(angle);
     let s = sin(angle);
@@ -119,9 +118,5 @@ pub fn mul_color(c: Color, k: f32) -> Color {
 }
 
 pub fn mix_color(a: Color, b: Color, t: f32) -> Color {
-    color(
-        mix(a.r, b.r, t),
-        mix(a.g, b.g, t),
-        mix(a.b, b.b, t),
-    )
+    color(mix(a.r, b.r, t), mix(a.g, b.g, t), mix(a.b, b.b, t))
 }

@@ -5,5 +5,5 @@ edition = "2024"
 
 [dependencies]
 rs2glsl-stdlib = { version = "0.1.0", path = "../rs2glsl-stdlib" }
-rs2glsl-transpiler = { version = "0.1.0", path = "../rs2glsl-macros" }
+rs2glsl-transpiler = { version = "0.1.0", path = "../rs2glsl-transpiler" }
 rs2glsl-prelude = { version = "0.1.0", path = "../rs2glsl-prelude" }
