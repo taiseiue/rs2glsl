@@ -137,7 +137,7 @@ impl ModuleLoader {
 
         for item in &items {
             if let Item::Mod(item_mod) = item {
-                self.load_child_module(&module_id, &resolve_dir, item_mod)?;
+                self.load_child_module(&module_id, &file_path, &resolve_dir, item_mod)?;
             }
         }
 
@@ -155,6 +155,7 @@ impl ModuleLoader {
     fn load_child_module(
         &mut self,
         parent_id: &ModuleId,
+        parent_file_path: &Path,
         parent_resolve_dir: &Path,
         item_mod: &syn::ItemMod,
     ) -> Result<(), ResolveError> {
@@ -182,6 +183,12 @@ impl ModuleLoader {
                 searched_from: parent_resolve_dir.to_path_buf(),
             }
         })?;
+        if paths_equivalent(&file_path, parent_file_path) {
+            return Err(ResolveError::SelfReferentialModule {
+                module: display_module_id(&child_id),
+                file_path: file_path.clone(),
+            });
+        }
         let items = parse_file(&file_path)?;
         self.load_module(child_id, file_path, child_resolve_dir, items)
     }
@@ -247,7 +254,14 @@ impl ModuleLoader {
         }
 
         match &module_id.crate_id {
-            CrateId::Current => Err(ResolveError::UnknownModule(display_module_id(module_id))),
+            CrateId::Current => {
+                self.load_current_crate_module(module_id)?;
+                if self.modules.contains_key(module_id) {
+                    Ok(())
+                } else {
+                    Err(ResolveError::UnknownModule(display_module_id(module_id)))
+                }
+            }
             CrateId::External(crate_name) => {
                 self.load_external_crate(crate_name)?;
                 if self.modules.contains_key(module_id) {
@@ -257,6 +271,42 @@ impl ModuleLoader {
                 }
             }
         }
+    }
+
+    fn load_current_crate_module(&mut self, module_id: &ModuleId) -> Result<(), ResolveError> {
+        if module_id.path.is_empty() {
+            return Ok(());
+        }
+
+        let root = self
+            .modules
+            .get(&ModuleId::current(Vec::new()))
+            .ok_or_else(|| ResolveError::UnknownModule("crate".to_string()))?;
+        let mut resolve_dir = root
+            .file_path
+            .parent()
+            .ok_or_else(|| ResolveError::MissingParent(root.file_path.clone()))?
+            .to_path_buf();
+        let mut current_path = Vec::new();
+        let mut file_path = None;
+
+        for segment in &module_id.path {
+            let next_file_path = resolve_module_path(&resolve_dir, segment).ok_or_else(|| {
+                let mut missing_path = current_path.clone();
+                missing_path.push(segment.clone());
+                ResolveError::ModuleNotFound {
+                    module: display_module_id(&ModuleId::current(missing_path)),
+                    searched_from: resolve_dir.clone(),
+                }
+            })?;
+            current_path.push(segment.clone());
+            resolve_dir = resolve_dir.join(segment);
+            file_path = Some(next_file_path);
+        }
+
+        let file_path = file_path.expect("non-empty module path must produce file path");
+        let items = parse_file(&file_path)?;
+        self.load_module(module_id.clone(), file_path, resolve_dir, items)
     }
 
     fn load_external_crate(&mut self, crate_name: &str) -> Result<(), ResolveError> {
@@ -388,6 +438,13 @@ fn resolve_module_path(parent_resolve_dir: &Path, ident: &str) -> Option<PathBuf
     }
 
     None
+}
+
+fn paths_equivalent(left: &Path, right: &Path) -> bool {
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
+    }
 }
 
 fn collect_use_targets(tree: &UseTree, current_crate: &CrateId) -> Vec<ModuleId> {
@@ -810,6 +867,10 @@ pub enum ResolveError {
         searched_from: PathBuf,
     },
     Parse(PathBuf, String),
+    SelfReferentialModule {
+        module: String,
+        file_path: PathBuf,
+    },
     UnknownModule(String),
     UnsupportedPackageSource {
         crate_name: String,
@@ -879,6 +940,11 @@ impl fmt::Display for ResolveError {
                 searched_from.display()
             ),
             Self::Parse(path, err) => write!(f, "Parse error ({}): {err}", path.display()),
+            Self::SelfReferentialModule { module, file_path } => write!(
+                f,
+                "Module `{module}` resolves to its own source file {}. Remove the self-referential `mod` declaration.",
+                file_path.display()
+            ),
             Self::UnknownModule(module) => write!(f, "Unknown module `{module}`"),
             Self::UnsupportedPackageSource { crate_name, source } => write!(
                 f,
@@ -992,6 +1058,64 @@ fn double(x: f32) -> f32 {
         assert!(glsl.contains("float double(float x);"));
         assert!(glsl.contains("float helper(float x);"));
         assert!(glsl.contains("return vec4(helper(time), 0.0, 0.0, 1.0);"));
+
+        fs::remove_dir_all(dir).expect("failed to clean temp dir");
+    }
+
+    #[test]
+    fn resolves_current_crate_module_from_use_without_mod_declaration() {
+        let dir = temp_dir_path("implicit-current-module");
+        let root = dir.join("shader.rs");
+        let std_file = dir.join("std.rs");
+
+        write_file(
+            &root,
+            "\
+use crate::std::*;
+
+fn main_image(frag_coord: Point, resolution: Point, time: f32) -> Vec4 {
+    vec4(frag_coord.x / resolution.x, time, 0.0, 1.0)
+}
+",
+        );
+        write_file(
+            &std_file,
+            "\
+#[structlayout(vec2)]
+struct Point {
+    x: f32,
+    y: f32,
+}
+",
+        );
+
+        let source = read_sources(&[root]).expect("resolve failed");
+        assert!(source.contains("struct Point"));
+        assert!(!source.contains("use crate::std::*;"));
+
+        fs::remove_dir_all(dir).expect("failed to clean temp dir");
+    }
+
+    #[test]
+    fn reports_self_referential_module_declaration() {
+        let dir = temp_dir_path("self-ref-module");
+        let root = dir.join("main.rs");
+
+        write_file(
+            &root,
+            "\
+mod main;
+
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    vec4(0.0, 0.0, 0.0, 1.0)
+}
+",
+        );
+
+        let err = read_sources(&[root]).expect_err("resolution should fail");
+        let message = err.to_string();
+        assert!(message.contains("resolves to its own source file"));
+        assert!(message.contains("crate::main"));
 
         fs::remove_dir_all(dir).expect("failed to clean temp dir");
     }
