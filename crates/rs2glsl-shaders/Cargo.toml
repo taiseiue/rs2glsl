@@ -1,8 +1,0 @@
-[package]
-name = "rs2glsl-shaders"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-rs2glsl-prelude = { path = "../rs2glsl-prelude" }
-rs2glsl-macros = { path = "../rs2glsl-macros" }
