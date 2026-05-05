@@ -9,7 +9,7 @@ members = [
   "crates/shader-prelude",
   "crates/shader-transpiler",
   "crates/shader-cli",
-  "crates/shaders", "tmp/my_vj",
+  "crates/shaders"
 ]
 resolver = "2"
 

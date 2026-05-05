@@ -34,7 +34,9 @@ version = "0.1.0"
 name = "shader-cli"
 version = "0.1.0"
 dependencies = [
+ "quote",
  "shader-transpiler",
+ "syn",
 ]
 
 [[package]]
