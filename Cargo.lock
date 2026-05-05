@@ -34,9 +34,8 @@ version = "0.1.0"
 name = "shader-cli"
 version = "0.1.0"
 dependencies = [
- "quote",
+ "shader-solver",
  "shader-transpiler",
- "syn",
 ]
 
 [[package]]
@@ -49,6 +48,15 @@ version = "0.1.0"
 dependencies = [
  "glam",
  "shader-macro",
+]
+
+[[package]]
+name = "shader-solver"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "shader-transpiler",
+ "syn",
 ]
 
 [[package]]

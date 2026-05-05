@@ -1,8 +1,11 @@
 [package]
-name = "shader-cli"
+name = "shader-solver"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-shader-solver = { version = "0.1.0", path = "../shader-solver" }
+quote = "1.0.45"
+syn = { version = "2.0.117", features = ["full"] }
+
+[dev-dependencies]
 shader-transpiler = { version = "0.1.0", path = "../shader-transpiler" }

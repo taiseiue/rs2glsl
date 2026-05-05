@@ -7,9 +7,9 @@ autoexamples = false
 members = [
   "crates/shader-macro",
   "crates/shader-prelude",
+  "crates/shader-solver",
   "crates/shader-transpiler",
   "crates/shader-cli",
   "crates/shaders"
 ]
 resolver = "2"
-
