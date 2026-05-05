@@ -20,12 +20,30 @@ pub(super) fn generate_expr(
                 syn::BinOp::Sub(_) => ("-", ty::infer_binop_type(&left_ty, &right_ty)?),
                 syn::BinOp::Mul(_) => ("*", ty::infer_binop_type(&left_ty, &right_ty)?),
                 syn::BinOp::Div(_) => ("/", ty::infer_binop_type(&left_ty, &right_ty)?),
-                syn::BinOp::AddAssign(_) => ("+=", left_ty.clone()),
-                syn::BinOp::SubAssign(_) => ("-=", left_ty.clone()),
-                syn::BinOp::MulAssign(_) => ("*=", left_ty.clone()),
-                syn::BinOp::DivAssign(_) => ("/=", left_ty.clone()),
-                syn::BinOp::Eq(_) => ("==", GlslType::Bool),
-                syn::BinOp::Ne(_) => ("!=", GlslType::Bool),
+                syn::BinOp::AddAssign(_) => {
+                    reject_array_compound_assign(&left_ty)?;
+                    ("+=", left_ty.clone())
+                }
+                syn::BinOp::SubAssign(_) => {
+                    reject_array_compound_assign(&left_ty)?;
+                    ("-=", left_ty.clone())
+                }
+                syn::BinOp::MulAssign(_) => {
+                    reject_array_compound_assign(&left_ty)?;
+                    ("*=", left_ty.clone())
+                }
+                syn::BinOp::DivAssign(_) => {
+                    reject_array_compound_assign(&left_ty)?;
+                    ("/=", left_ty.clone())
+                }
+                syn::BinOp::Eq(_) => {
+                    ty::validate_equality_operands(&left_ty, &right_ty)?;
+                    ("==", GlslType::Bool)
+                }
+                syn::BinOp::Ne(_) => {
+                    ty::validate_equality_operands(&left_ty, &right_ty)?;
+                    ("!=", GlslType::Bool)
+                }
                 syn::BinOp::Lt(_) => ("<", GlslType::Bool),
                 syn::BinOp::Gt(_) => (">", GlslType::Bool),
                 syn::BinOp::Le(_) => ("<=", GlslType::Bool),
@@ -239,6 +257,153 @@ pub(super) fn generate_expr(
     }
 }
 
+pub(super) fn infer_expr_type(
+    expr: &syn::Expr,
+    env: &TypeEnv,
+    registry: &StructRegistry,
+    func_registry: &FuncRegistry,
+) -> Result<GlslType, TranspileError> {
+    match expr {
+        syn::Expr::Binary(bin) => {
+            let left_ty = infer_expr_type(&bin.left, env, registry, func_registry)?;
+            let right_ty = infer_expr_type(&bin.right, env, registry, func_registry)?;
+            match &bin.op {
+                syn::BinOp::Add(_)
+                | syn::BinOp::Sub(_)
+                | syn::BinOp::Mul(_)
+                | syn::BinOp::Div(_) => ty::infer_arithmetic_type(&left_ty, &right_ty),
+                syn::BinOp::AddAssign(_)
+                | syn::BinOp::SubAssign(_)
+                | syn::BinOp::MulAssign(_)
+                | syn::BinOp::DivAssign(_) => Ok(left_ty),
+                syn::BinOp::Eq(_) | syn::BinOp::Ne(_) => {
+                    ty::validate_equality_operands(&left_ty, &right_ty)?;
+                    Ok(GlslType::Bool)
+                }
+                syn::BinOp::Lt(_)
+                | syn::BinOp::Gt(_)
+                | syn::BinOp::Le(_)
+                | syn::BinOp::Ge(_)
+                | syn::BinOp::And(_)
+                | syn::BinOp::Or(_) => Ok(GlslType::Bool),
+                _ => Err(TranspileError::UnsupportedSyntax("binary operator")),
+            }
+        }
+        syn::Expr::Array(array) => {
+            let elements = array
+                .elems
+                .iter()
+                .map(|expr| infer_expr_type(expr, env, registry, func_registry))
+                .collect::<Result<Vec<_>, _>>()?;
+            infer_array_literal_type(elements)
+        }
+        syn::Expr::Repeat(repeat) => {
+            let len = ty::parse_array_len(&repeat.len)?;
+            let expr_ty = infer_expr_type(&repeat.expr, env, registry, func_registry)?;
+            Ok(GlslType::Array(Box::new(expr_ty), len))
+        }
+        syn::Expr::Call(call) => {
+            let func_name = match &*call.func {
+                syn::Expr::Path(p) => p
+                    .path
+                    .segments
+                    .iter()
+                    .map(|s| s.ident.to_string())
+                    .collect::<Vec<_>>()
+                    .join("::"),
+                _ => return Err(TranspileError::UnsupportedSyntax("non-path function call")),
+            };
+            let attrs = func_registry
+                .get(&func_name)
+                .ok_or_else(|| TranspileError::UndefinedFunction(func_name.clone()))?;
+            Ok(attrs.return_type.clone().unwrap_or(GlslType::Float))
+        }
+        syn::Expr::Struct(s) => {
+            let struct_name = s.path.segments.last().unwrap().ident.to_string();
+            let def = registry
+                .get(&struct_name)
+                .ok_or(TranspileError::UnsupportedSyntax(
+                    "unknown struct in struct literal",
+                ))?;
+            Ok(GlslType::Struct(
+                struct_name,
+                Box::new(def.glsl_type.clone()),
+            ))
+        }
+        syn::Expr::Field(field) => {
+            let base_ty = infer_expr_type(&field.base, env, registry, func_registry)?;
+            let member = match &field.member {
+                syn::Member::Named(id) => id.to_string(),
+                _ => return Err(TranspileError::UnsupportedSyntax("tuple field access")),
+            };
+
+            if let GlslType::Struct(struct_name, _) = &base_ty {
+                let def = registry
+                    .get(struct_name.as_str())
+                    .ok_or(TranspileError::UnsupportedSyntax("unknown struct type"))?;
+                def.fields
+                    .get(&member)
+                    .ok_or(TranspileError::UnsupportedSyntax("unknown struct field"))?;
+                Ok(GlslType::Float)
+            } else {
+                ty::infer_swizzle_type(&member)
+            }
+        }
+        syn::Expr::Index(index) => {
+            let base_ty = infer_expr_type(&index.expr, env, registry, func_registry)?;
+            let idx_ty = infer_expr_type(&index.index, env, registry, func_registry)?;
+            expect_int_index(&idx_ty)?;
+            base_ty
+                .array_element()
+                .cloned()
+                .ok_or(TranspileError::UnsupportedSyntax(
+                    "indexing a non-array expression",
+                ))
+        }
+        syn::Expr::Path(p) => {
+            let var_name = p.path.segments.last().unwrap().ident.to_string();
+            let ty = env
+                .get(&var_name)
+                .ok_or_else(|| TranspileError::UnknownVariable(var_name.clone()))?
+                .clone();
+            match ty {
+                GlslType::Builtin(_, inner) => Ok(*inner),
+                _ => Ok(ty),
+            }
+        }
+        syn::Expr::Assign(assign) => infer_expr_type(&assign.left, env, registry, func_registry),
+        syn::Expr::Cast(cast) => {
+            let expr_ty = infer_expr_type(&cast.expr, env, registry, func_registry)?;
+            let target_ty = ty::parse_type(&cast.ty, registry, &Default::default())?;
+            match (expr_ty.primitive(), target_ty.primitive()) {
+                (GlslType::Int, GlslType::Float) | (GlslType::Float, GlslType::Int) => {
+                    Ok(target_ty)
+                }
+                (src, dst) if src == dst => Ok(target_ty),
+                _ => Err(TranspileError::UnsupportedSyntax(
+                    "unsupported cast; only int <-> float casts are supported",
+                )),
+            }
+        }
+        syn::Expr::Unary(u) => {
+            let inner_ty = infer_expr_type(&u.expr, env, registry, func_registry)?;
+            match &u.op {
+                syn::UnOp::Neg(_) | syn::UnOp::Deref(_) => Ok(inner_ty),
+                syn::UnOp::Not(_) => Ok(GlslType::Bool),
+                _ => Err(TranspileError::UnsupportedSyntax("unary operator")),
+            }
+        }
+        syn::Expr::Lit(lit) => match &lit.lit {
+            syn::Lit::Float(_) => Ok(GlslType::Float),
+            syn::Lit::Int(_) => Ok(GlslType::Int),
+            syn::Lit::Bool(_) => Ok(GlslType::Bool),
+            _ => Err(TranspileError::UnsupportedSyntax("literal kind")),
+        },
+        syn::Expr::Paren(p) => infer_expr_type(&p.expr, env, registry, func_registry),
+        _ => Err(TranspileError::UnsupportedSyntax("expression kind")),
+    }
+}
+
 pub(super) fn extract_ident(pat: &syn::Pat) -> Result<String, TranspileError> {
     match pat {
         syn::Pat::Ident(i) => Ok(i.ident.to_string()),
@@ -260,22 +425,39 @@ fn expect_int_index(ty: &GlslType) -> Result<(), TranspileError> {
 fn build_array_literal(
     elements: Vec<(String, GlslType)>,
 ) -> Result<(String, GlslType), TranspileError> {
+    let out_ty = infer_array_literal_type(elements.iter().map(|(_, ty)| ty.clone()).collect())?;
+    let exprs = elements
+        .into_iter()
+        .map(|(expr, _)| expr)
+        .collect::<Vec<_>>();
+    let ctor_ty = out_ty.render_return_type();
+    Ok((format!("{ctor_ty}({})", exprs.join(", ")), out_ty))
+}
+
+fn infer_array_literal_type(elements: Vec<GlslType>) -> Result<GlslType, TranspileError> {
+    let len = elements.len();
     let mut iter = elements.into_iter();
-    let (first_expr, element_ty) = iter.next().ok_or(TranspileError::UnsupportedSyntax(
+    let element_ty = iter.next().ok_or(TranspileError::UnsupportedSyntax(
         "GLSL does not support zero-length array literals",
     ))?;
 
-    let mut exprs = vec![first_expr];
-    for (expr_str, ty) in iter {
+    for ty in iter {
         if ty != element_ty {
             return Err(TranspileError::UnsupportedSyntax(
                 "array elements must all have the same type",
             ));
         }
-        exprs.push(expr_str);
     }
 
-    let out_ty = GlslType::Array(Box::new(element_ty), exprs.len());
-    let ctor_ty = out_ty.render_return_type();
-    Ok((format!("{ctor_ty}({})", exprs.join(", ")), out_ty))
+    Ok(GlslType::Array(Box::new(element_ty), len))
+}
+
+fn reject_array_compound_assign(ty: &GlslType) -> Result<(), TranspileError> {
+    if matches!(ty, GlslType::Array(_, _)) {
+        Err(TranspileError::UnsupportedSyntax(
+            "array compound assignments require statement lowering",
+        ))
+    } else {
+        Ok(())
+    }
 }

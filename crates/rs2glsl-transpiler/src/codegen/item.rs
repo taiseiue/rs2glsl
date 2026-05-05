@@ -57,6 +57,7 @@ pub(super) fn generate_function(
         syn::ReturnType::Type(_, _) => Tail::Return,
         syn::ReturnType::Default => Tail::Discard,
     };
+    let mut temp_counter = 0;
 
     let body = generate_block(
         &func.block,
@@ -64,6 +65,7 @@ pub(super) fn generate_function(
         registry,
         func_registry,
         aliases,
+        &mut temp_counter,
         tail,
     )?;
 

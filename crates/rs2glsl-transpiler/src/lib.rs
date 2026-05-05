@@ -448,7 +448,9 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     vec4(weights[1], weights[2], 0.0, 1.0)
 }",
         );
-        assert!(out.contains("float weights[3] = float[3](1.0, 2.0, 3.0);"));
+        assert!(out.contains("float weights[3];"));
+        assert!(out.contains("weights[__rs2glsl_i"));
+        assert!(out.contains("= (float[3](1.0, 2.0, 3.0))[__rs2glsl_i"));
         assert!(out.contains("return vec4(weights[1], weights[2], 0.0, 1.0);"));
     }
 
@@ -482,8 +484,13 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         );
         assert!(out.contains("float[3] weights();"));
         assert!(out.contains("float[3] weights() {"));
-        assert!(out.contains("return float[3](1.0, 2.0, 3.0);"));
-        assert!(out.contains("float values[3] = weights();"));
+        assert!(out.contains("float __rs2glsl_tmp_array_0[3];"));
+        assert!(out.contains("__rs2glsl_tmp_array_0[__rs2glsl_i"));
+        assert!(out.contains("= (float[3](1.0, 2.0, 3.0))[__rs2glsl_i"));
+        assert!(out.contains("return __rs2glsl_tmp_array_0;"));
+        assert!(out.contains("float values[3];"));
+        assert!(out.contains("values[__rs2glsl_i"));
+        assert!(out.contains("= (weights())[__rs2glsl_i"));
     }
 
     #[test]
@@ -495,8 +502,10 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     vec4(grid[0][1], grid[1][0], 0.0, 1.0)
 }",
         );
+        assert!(out.contains("float grid[2][2];"));
+        assert!(out.contains("grid[__rs2glsl_i"));
         assert!(
-            out.contains("float grid[2][2] = float[2][2](float[2](1.0, 2.0), float[2](3.0, 4.0));")
+            out.contains("= (float[2][2](float[2](1.0, 2.0), float[2](3.0, 4.0)))[__rs2glsl_i")
         );
         assert!(out.contains("return vec4(grid[0][1], grid[1][0], 0.0, 1.0);"));
     }
@@ -510,7 +519,9 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     vec4(values[0], values[1], values[2], 1.0)
 }",
         );
-        assert!(out.contains("float values[3] = float[3](time, time, time);"));
+        assert!(out.contains("float values[3];"));
+        assert!(out.contains("values[__rs2glsl_i"));
+        assert!(out.contains("= (float[3](time, time, time))[__rs2glsl_i"));
         assert!(out.contains("return vec4(values[0], values[1], values[2], 1.0);"));
     }
 
@@ -523,10 +534,108 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     vec4(grid[0][0], grid[0][1], grid[1][0], grid[1][1])
 }",
         );
-        assert!(out.contains(
-            "float grid[2][2] = float[2][2](float[2](time, time), float[2](time, time));"
-        ));
+        assert!(out.contains("float grid[2][2];"));
+        assert!(out.contains("grid[__rs2glsl_i"));
+        assert!(
+            out.contains("= (float[2][2](float[2](time, time), float[2](time, time)))[__rs2glsl_i")
+        );
         assert!(out.contains("return vec4(grid[0][0], grid[0][1], grid[1][0], grid[1][1]);"));
+    }
+
+    #[test]
+    fn array_addition_lowers_to_elementwise_loops() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let a: [f32; 3] = [1.0, 2.0, 3.0];
+    let b: [f32; 3] = [4.0, 5.0, 6.0];
+    let c = a + b;
+    vec4(c[0], c[1], c[2], 1.0)
+}",
+        );
+        assert!(out.contains("float c[3];"));
+        assert!(out.contains("c[__rs2glsl_i"));
+        assert!(out.contains("= ((a)[__rs2glsl_i"));
+        assert!(out.contains("+ (b)[__rs2glsl_i"));
+        assert!(out.contains("return vec4(c[0], c[1], c[2], 1.0);"));
+    }
+
+    #[test]
+    fn array_scalar_multiplication_lowers_to_elementwise_loops() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let a: [f32; 3] = [1.0, 2.0, 3.0];
+    let scaled = a * 2.0;
+    vec4(scaled[0], scaled[1], scaled[2], 1.0)
+}",
+        );
+        assert!(out.contains("scaled[__rs2glsl_i"));
+        assert!(out.contains("= ((a)[__rs2glsl_i"));
+        assert!(out.contains("* 2.0);"));
+    }
+
+    #[test]
+    fn multidimensional_array_arithmetic_lowers_nested_loops() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let a: [[f32; 2]; 2] = [[1.0, 2.0], [3.0, 4.0]];
+    let b: [[f32; 2]; 2] = [[5.0, 6.0], [7.0, 8.0]];
+    let c = a + b;
+    vec4(c[0][0], c[0][1], c[1][0], c[1][1])
+}",
+        );
+        assert!(out.contains("for (int __rs2glsl_i"));
+        assert!(out.contains("c[__rs2glsl_i"));
+        assert!(out.contains("= ((a)[__rs2glsl_i"));
+        assert!(out.contains("+ (b)[__rs2glsl_i"));
+    }
+
+    #[test]
+    fn array_return_addition_lowers_via_temp() {
+        let out = glsl(
+            "\
+fn sum(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    a + b
+}
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let c = sum([1.0, 2.0, 3.0], [4.0, 5.0, 6.0]);
+    vec4(c[0], c[1], c[2], 1.0)
+}",
+        );
+        assert!(out.contains("float[3] sum(float a[3], float b[3]) {"));
+        assert!(out.contains("float __rs2glsl_tmp_array_0[3];"));
+        assert!(out.contains("__rs2glsl_tmp_array_0[__rs2glsl_i"));
+        assert!(out.contains("= ((a)[__rs2glsl_i"));
+        assert!(out.contains("+ (b)[__rs2glsl_i"));
+        assert!(out.contains("return __rs2glsl_tmp_array_0;"));
+    }
+
+    #[test]
+    fn array_compound_assign_lowers_to_elementwise_loops() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let values: [f32; 3] = [1.0, 2.0, 3.0];
+    values += [4.0, 5.0, 6.0];
+    vec4(values[0], values[1], values[2], 1.0)
+}",
+        );
+        assert!(out.contains("values[__rs2glsl_i"));
+        assert!(out.contains("= (values[__rs2glsl_i"));
+        assert!(out.contains("+ (float[3](4.0, 5.0, 6.0))[__rs2glsl_i"));
+    }
+
+    #[test]
+    fn array_equality_is_emitted_directly() {
+        let out = glsl(
+            "\
+fn same(a: [f32; 3], b: [f32; 3]) -> bool {
+    a == b
+}",
+        );
+        assert!(out.contains("return (a == b);"));
     }
 
     #[test]
@@ -722,6 +831,25 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         assert!(matches!(
             err,
             TranspileError::UnsupportedSyntax("GLSL does not support zero-length arrays")
+        ));
+        assert_eq!(err.code(), "E0005");
+    }
+
+    #[test]
+    fn error_array_arithmetic_shape_mismatch_is_rejected() {
+        let err = transpile(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let a: [f32; 2] = [1.0, 2.0];
+    let b: [f32; 3] = [3.0, 4.0, 5.0];
+    let _c = a + b;
+    vec4(1.0, 0.0, 0.0, 1.0)
+}",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            TranspileError::UnsupportedSyntax("array operands must have the same shape")
         ));
         assert_eq!(err.code(), "E0005");
     }

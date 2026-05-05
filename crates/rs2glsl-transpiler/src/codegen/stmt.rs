@@ -1,6 +1,6 @@
-use super::expr::{extract_ident, generate_expr};
+use super::expr::{extract_ident, generate_expr, infer_expr_type};
 use super::structs::StructRegistry;
-use super::ty::parse_type;
+use super::ty::{self, parse_type};
 use super::{FuncRegistry, Tail, TypeAliasMap, TypeEnv};
 use crate::errors::TranspileError;
 use crate::types::GlslType;
@@ -11,6 +11,7 @@ pub(super) fn generate_block(
     registry: &StructRegistry,
     func_registry: &FuncRegistry,
     aliases: &TypeAliasMap,
+    temp_counter: &mut usize,
     tail: Tail<'_>,
 ) -> Result<String, TranspileError> {
     let mut out = String::new();
@@ -42,13 +43,27 @@ pub(super) fn generate_block(
                         registry,
                         func_registry,
                         aliases,
+                        temp_counter,
                     )?);
                 } else {
-                    let (expr_str, inferred_ty) =
-                        generate_expr(init_expr, env, registry, func_registry)?;
+                    let inferred_ty = infer_expr_type(init_expr, env, registry, func_registry)?;
                     let ty = annotated_ty.unwrap_or(inferred_ty);
                     env.insert(name.clone(), ty.clone());
-                    out.push_str(&format!("{} = {expr_str};\n", ty.render_decl(&name)));
+                    if matches!(ty, GlslType::Array(_, _)) {
+                        out.push_str(&format!("{};\n", ty.render_decl(&name)));
+                        out.push_str(&emit_expr_into_target(
+                            &name,
+                            &ty,
+                            init_expr,
+                            env,
+                            registry,
+                            func_registry,
+                            temp_counter,
+                        )?);
+                    } else {
+                        let (expr_str, _) = generate_expr(init_expr, env, registry, func_registry)?;
+                        out.push_str(&format!("{} = {expr_str};\n", ty.render_decl(&name)));
+                    }
                 }
             }
 
@@ -66,6 +81,7 @@ pub(super) fn generate_block(
                         registry,
                         func_registry,
                         aliases,
+                        temp_counter,
                     )?);
                 } else if let syn::Expr::ForLoop(for_loop) = expr {
                     out.push_str(&generate_for(
@@ -74,18 +90,25 @@ pub(super) fn generate_block(
                         registry,
                         func_registry,
                         aliases,
+                        temp_counter,
                     )?);
                 } else if is_last && semi.is_none() {
-                    let (expr_str, _) = generate_expr(expr, env, registry, func_registry)?;
-                    let line = match tail {
-                        Tail::Return => format!("return {expr_str};\n"),
-                        Tail::Assign(name) => format!("{name} = {expr_str};\n"),
-                        Tail::Discard => format!("{expr_str};\n"),
-                    };
-                    out.push_str(&line);
+                    out.push_str(&generate_tail_expr(
+                        expr,
+                        tail,
+                        env,
+                        registry,
+                        func_registry,
+                        temp_counter,
+                    )?);
                 } else {
-                    let (expr_str, _) = generate_expr(expr, env, registry, func_registry)?;
-                    out.push_str(&format!("{expr_str};\n"));
+                    out.push_str(&generate_statement_expr(
+                        expr,
+                        env,
+                        registry,
+                        func_registry,
+                        temp_counter,
+                    )?);
                 }
             }
 
@@ -110,6 +133,7 @@ pub(super) fn generate_for(
     registry: &StructRegistry,
     func_registry: &FuncRegistry,
     aliases: &TypeAliasMap,
+    temp_counter: &mut usize,
 ) -> Result<String, TranspileError> {
     let loop_var = extract_ident(&for_loop.pat)?;
     let range = match for_loop.expr.as_ref() {
@@ -149,6 +173,7 @@ pub(super) fn generate_for(
         registry,
         func_registry,
         aliases,
+        temp_counter,
         Tail::Discard,
     )?;
 
@@ -169,7 +194,7 @@ pub(super) fn infer_block_tail_type(
         .last()
         .ok_or(TranspileError::UnsupportedSyntax("empty if branch"))?;
     match tail {
-        syn::Stmt::Expr(expr, None) => Ok(generate_expr(expr, env, registry, func_registry)?.1),
+        syn::Stmt::Expr(expr, None) => infer_expr_type(expr, env, registry, func_registry),
         _ => Err(TranspileError::UnsupportedSyntax(
             "if expression branch must end with an expression",
         )),
@@ -183,6 +208,7 @@ pub(super) fn generate_if(
     registry: &StructRegistry,
     func_registry: &FuncRegistry,
     aliases: &TypeAliasMap,
+    temp_counter: &mut usize,
 ) -> Result<String, TranspileError> {
     let (cond_str, _) = generate_expr(&if_expr.cond, env, registry, func_registry)?;
     let then_body = generate_block(
@@ -191,6 +217,7 @@ pub(super) fn generate_if(
         registry,
         func_registry,
         aliases,
+        temp_counter,
         tail,
     )?;
 
@@ -198,13 +225,29 @@ pub(super) fn generate_if(
         None => String::new(),
         Some((_, else_expr)) => match else_expr.as_ref() {
             syn::Expr::Block(b) => {
-                let body = generate_block(&b.block, env, registry, func_registry, aliases, tail)?;
+                let body = generate_block(
+                    &b.block,
+                    env,
+                    registry,
+                    func_registry,
+                    aliases,
+                    temp_counter,
+                    tail,
+                )?;
                 format!(" else {{\n{body}}}")
             }
             syn::Expr::If(nested) => {
                 format!(
                     " else {}",
-                    generate_if(nested, tail, env, registry, func_registry, aliases)?
+                    generate_if(
+                        nested,
+                        tail,
+                        env,
+                        registry,
+                        func_registry,
+                        aliases,
+                        temp_counter,
+                    )?
                 )
             }
             _ => return Err(TranspileError::UnsupportedSyntax("else branch form")),
@@ -227,4 +270,364 @@ fn extract_local_binding(
         )),
         _ => Err(TranspileError::UnsupportedSyntax("non-ident pattern")),
     }
+}
+
+fn generate_statement_expr(
+    expr: &syn::Expr,
+    env: &TypeEnv,
+    registry: &StructRegistry,
+    func_registry: &FuncRegistry,
+    temp_counter: &mut usize,
+) -> Result<String, TranspileError> {
+    match expr {
+        syn::Expr::Assign(assign) => {
+            let lhs_ty = infer_expr_type(&assign.left, env, registry, func_registry)?;
+            if matches!(lhs_ty, GlslType::Array(_, _)) {
+                let lhs = generate_assignment_lhs(&assign.left, env, registry, func_registry)?;
+                emit_expr_into_target(
+                    &lhs,
+                    &lhs_ty,
+                    &assign.right,
+                    env,
+                    registry,
+                    func_registry,
+                    temp_counter,
+                )
+            } else {
+                let (expr_str, _) = generate_expr(expr, env, registry, func_registry)?;
+                Ok(format!("{expr_str};\n"))
+            }
+        }
+        syn::Expr::Binary(bin) => {
+            let lhs_ty = infer_expr_type(&bin.left, env, registry, func_registry)?;
+            match &bin.op {
+                syn::BinOp::AddAssign(_)
+                | syn::BinOp::SubAssign(_)
+                | syn::BinOp::MulAssign(_)
+                | syn::BinOp::DivAssign(_)
+                    if matches!(lhs_ty, GlslType::Array(_, _)) =>
+                {
+                    let lhs = generate_assignment_lhs(&bin.left, env, registry, func_registry)?;
+                    emit_compound_array_assign(
+                        &lhs,
+                        &lhs_ty,
+                        binary_operator_token(&bin.op)?,
+                        &bin.left,
+                        &bin.right,
+                        env,
+                        registry,
+                        func_registry,
+                        temp_counter,
+                    )
+                }
+                _ => {
+                    let (expr_str, _) = generate_expr(expr, env, registry, func_registry)?;
+                    Ok(format!("{expr_str};\n"))
+                }
+            }
+        }
+        _ => {
+            let (expr_str, _) = generate_expr(expr, env, registry, func_registry)?;
+            Ok(format!("{expr_str};\n"))
+        }
+    }
+}
+
+fn generate_tail_expr(
+    expr: &syn::Expr,
+    tail: Tail<'_>,
+    env: &TypeEnv,
+    registry: &StructRegistry,
+    func_registry: &FuncRegistry,
+    temp_counter: &mut usize,
+) -> Result<String, TranspileError> {
+    let expr_ty = infer_expr_type(expr, env, registry, func_registry)?;
+    match tail {
+        Tail::Return if matches!(expr_ty, GlslType::Array(_, _)) => {
+            let temp_name = next_temp_name(temp_counter);
+            let mut out = format!("{};\n", expr_ty.render_decl(&temp_name));
+            out.push_str(&emit_expr_into_target(
+                &temp_name,
+                &expr_ty,
+                expr,
+                env,
+                registry,
+                func_registry,
+                temp_counter,
+            )?);
+            out.push_str(&format!("return {temp_name};\n"));
+            Ok(out)
+        }
+        Tail::Assign(name) => {
+            let target_ty = env
+                .get(name)
+                .ok_or_else(|| TranspileError::UnknownVariable(name.to_string()))?;
+            if matches!(target_ty, GlslType::Array(_, _)) {
+                emit_expr_into_target(
+                    name,
+                    target_ty,
+                    expr,
+                    env,
+                    registry,
+                    func_registry,
+                    temp_counter,
+                )
+            } else {
+                let (expr_str, _) = generate_expr(expr, env, registry, func_registry)?;
+                Ok(format!("{name} = {expr_str};\n"))
+            }
+        }
+        Tail::Return => {
+            let (expr_str, _) = generate_expr(expr, env, registry, func_registry)?;
+            Ok(format!("return {expr_str};\n"))
+        }
+        Tail::Discard => {
+            let (expr_str, _) = generate_expr(expr, env, registry, func_registry)?;
+            Ok(format!("{expr_str};\n"))
+        }
+    }
+}
+
+fn emit_expr_into_target(
+    target: &str,
+    target_ty: &GlslType,
+    expr: &syn::Expr,
+    env: &TypeEnv,
+    registry: &StructRegistry,
+    func_registry: &FuncRegistry,
+    temp_counter: &mut usize,
+) -> Result<String, TranspileError> {
+    let mut indices = Vec::new();
+    emit_expr_into_target_with_indices(
+        target,
+        target_ty,
+        expr,
+        env,
+        registry,
+        func_registry,
+        temp_counter,
+        &mut indices,
+    )
+}
+
+fn emit_expr_into_target_with_indices(
+    target: &str,
+    target_ty: &GlslType,
+    expr: &syn::Expr,
+    env: &TypeEnv,
+    registry: &StructRegistry,
+    func_registry: &FuncRegistry,
+    temp_counter: &mut usize,
+    indices: &mut Vec<String>,
+) -> Result<String, TranspileError> {
+    match target_ty {
+        GlslType::Array(inner, len) => {
+            let idx = next_index_name(temp_counter);
+            indices.push(idx.clone());
+            let body = emit_expr_into_target_with_indices(
+                &format!("{target}[{idx}]"),
+                inner,
+                expr,
+                env,
+                registry,
+                func_registry,
+                temp_counter,
+                indices,
+            )?;
+            indices.pop();
+            Ok(format!(
+                "for (int {idx} = 0; {idx} < {len}; {idx}++) {{\n{body}}}\n"
+            ))
+        }
+        _ => {
+            let (expr_str, _) = render_indexed_expr(expr, indices, env, registry, func_registry)?;
+            Ok(format!("{target} = {expr_str};\n"))
+        }
+    }
+}
+
+fn emit_compound_array_assign(
+    target: &str,
+    target_ty: &GlslType,
+    op: &'static str,
+    lhs_expr: &syn::Expr,
+    rhs_expr: &syn::Expr,
+    env: &TypeEnv,
+    registry: &StructRegistry,
+    func_registry: &FuncRegistry,
+    temp_counter: &mut usize,
+) -> Result<String, TranspileError> {
+    let mut indices = Vec::new();
+    emit_compound_array_assign_with_indices(
+        target,
+        target_ty,
+        op,
+        lhs_expr,
+        rhs_expr,
+        env,
+        registry,
+        func_registry,
+        temp_counter,
+        &mut indices,
+    )
+}
+
+fn emit_compound_array_assign_with_indices(
+    target: &str,
+    target_ty: &GlslType,
+    op: &'static str,
+    lhs_expr: &syn::Expr,
+    rhs_expr: &syn::Expr,
+    env: &TypeEnv,
+    registry: &StructRegistry,
+    func_registry: &FuncRegistry,
+    temp_counter: &mut usize,
+    indices: &mut Vec<String>,
+) -> Result<String, TranspileError> {
+    match target_ty {
+        GlslType::Array(inner, len) => {
+            let idx = next_index_name(temp_counter);
+            indices.push(idx.clone());
+            let body = emit_compound_array_assign_with_indices(
+                &format!("{target}[{idx}]"),
+                inner,
+                op,
+                lhs_expr,
+                rhs_expr,
+                env,
+                registry,
+                func_registry,
+                temp_counter,
+                indices,
+            )?;
+            indices.pop();
+            Ok(format!(
+                "for (int {idx} = 0; {idx} < {len}; {idx}++) {{\n{body}}}\n"
+            ))
+        }
+        _ => {
+            let (rhs_str, _) =
+                render_indexed_expr(rhs_expr, indices, env, registry, func_registry)?;
+            Ok(format!("{target} = ({target} {op} {rhs_str});\n"))
+        }
+    }
+}
+
+fn render_indexed_expr(
+    expr: &syn::Expr,
+    indices: &[String],
+    env: &TypeEnv,
+    registry: &StructRegistry,
+    func_registry: &FuncRegistry,
+) -> Result<(String, GlslType), TranspileError> {
+    match expr {
+        syn::Expr::Paren(p) => {
+            let (inner, ty) = render_indexed_expr(&p.expr, indices, env, registry, func_registry)?;
+            Ok((format!("({inner})"), ty))
+        }
+        syn::Expr::Binary(bin) => match &bin.op {
+            syn::BinOp::Add(_) | syn::BinOp::Sub(_) | syn::BinOp::Mul(_) | syn::BinOp::Div(_) => {
+                let (left, left_ty) =
+                    render_indexed_operand(&bin.left, indices, env, registry, func_registry)?;
+                let (right, right_ty) =
+                    render_indexed_operand(&bin.right, indices, env, registry, func_registry)?;
+                Ok((
+                    format!("({left} {} {right})", binary_operator_token(&bin.op)?),
+                    ty::infer_arithmetic_type(&left_ty, &right_ty)?,
+                ))
+            }
+            _ => {
+                let (expr_str, expr_ty) = generate_expr(expr, env, registry, func_registry)?;
+                Ok((
+                    index_expr(expr_str, indices),
+                    descend_type(expr_ty, indices.len())?,
+                ))
+            }
+        },
+        _ => {
+            let (expr_str, expr_ty) = generate_expr(expr, env, registry, func_registry)?;
+            Ok((
+                index_expr(expr_str, indices),
+                descend_type(expr_ty, indices.len())?,
+            ))
+        }
+    }
+}
+
+fn render_indexed_operand(
+    expr: &syn::Expr,
+    indices: &[String],
+    env: &TypeEnv,
+    registry: &StructRegistry,
+    func_registry: &FuncRegistry,
+) -> Result<(String, GlslType), TranspileError> {
+    let expr_ty = infer_expr_type(expr, env, registry, func_registry)?;
+    if matches!(expr_ty, GlslType::Array(_, _)) {
+        render_indexed_expr(expr, indices, env, registry, func_registry)
+    } else {
+        let (expr_str, ty) = generate_expr(expr, env, registry, func_registry)?;
+        Ok((expr_str, ty))
+    }
+}
+
+fn descend_type(mut ty: GlslType, depth: usize) -> Result<GlslType, TranspileError> {
+    for _ in 0..depth {
+        ty = ty
+            .array_element()
+            .cloned()
+            .ok_or(TranspileError::UnsupportedSyntax(
+                "array index depth exceeds operand rank",
+            ))?;
+    }
+    Ok(ty)
+}
+
+fn index_expr(expr: String, indices: &[String]) -> String {
+    if indices.is_empty() {
+        expr
+    } else {
+        format!(
+            "({expr}){}",
+            indices
+                .iter()
+                .map(|idx| format!("[{idx}]"))
+                .collect::<String>()
+        )
+    }
+}
+
+fn binary_operator_token(op: &syn::BinOp) -> Result<&'static str, TranspileError> {
+    match op {
+        syn::BinOp::Add(_) | syn::BinOp::AddAssign(_) => Ok("+"),
+        syn::BinOp::Sub(_) | syn::BinOp::SubAssign(_) => Ok("-"),
+        syn::BinOp::Mul(_) | syn::BinOp::MulAssign(_) => Ok("*"),
+        syn::BinOp::Div(_) | syn::BinOp::DivAssign(_) => Ok("/"),
+        _ => Err(TranspileError::UnsupportedSyntax("binary operator")),
+    }
+}
+
+fn generate_assignment_lhs(
+    expr: &syn::Expr,
+    env: &TypeEnv,
+    registry: &StructRegistry,
+    func_registry: &FuncRegistry,
+) -> Result<String, TranspileError> {
+    match expr {
+        syn::Expr::Unary(u) if matches!(u.op, syn::UnOp::Deref(_)) => {
+            Ok(generate_expr(&u.expr, env, registry, func_registry)?.0)
+        }
+        _ => Ok(generate_expr(expr, env, registry, func_registry)?.0),
+    }
+}
+
+fn next_temp_name(counter: &mut usize) -> String {
+    let name = format!("__rs2glsl_tmp_array_{counter}");
+    *counter += 1;
+    name
+}
+
+fn next_index_name(counter: &mut usize) -> String {
+    let name = format!("__rs2glsl_i{counter}");
+    *counter += 1;
+    name
 }
