@@ -11,5 +11,5 @@ members = [
   "crates/rs2glsl-transpiler",
   "crates/rs2glsl-cli",
   "crates/rs2glsl-shaders"
-, "crates/rs2glsl-adapters"]
+, "crates/rs2glsl-adapters", "crates/rs2glsl-stdlib"]
 resolver = "2"

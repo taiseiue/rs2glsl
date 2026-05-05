@@ -2,7 +2,7 @@ use rs2glsl_macros::{glsl_name, builtin, uniform, out};
 use rs2glsl_prelude::*;
 
 #[uniform]
-static time: f32 = 0;
+static time: f32 = 0.0;
 
 #[uniform]
 static resolution: Vec2 = ();
