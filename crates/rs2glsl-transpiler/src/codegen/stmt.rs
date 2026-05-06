@@ -94,6 +94,40 @@ pub(super) fn generate_block(
                         aliases,
                         temp_counter,
                     )?);
+                } else if let syn::Expr::While(while_loop) = expr {
+                    out.push_str(&generate_while(
+                        while_loop,
+                        env,
+                        registry,
+                        func_registry,
+                        aliases,
+                        temp_counter,
+                    )?);
+                } else if let syn::Expr::Break(br) = expr {
+                    if br.label.is_some() {
+                        return Err(TranspileError::UnsupportedSyntax("labeled break"));
+                    }
+                    if br.expr.is_some() {
+                        return Err(TranspileError::UnsupportedSyntax("break with value"));
+                    }
+                    out.push_str("break;\n");
+                } else if let syn::Expr::Continue(cont) = expr {
+                    if cont.label.is_some() {
+                        return Err(TranspileError::UnsupportedSyntax("labeled continue"));
+                    }
+                    out.push_str("continue;\n");
+                } else if let syn::Expr::Loop(loop_expr) = expr {
+                    let mut loop_env = env.clone();
+                    let body = generate_block(
+                        &loop_expr.body,
+                        &mut loop_env,
+                        registry,
+                        func_registry,
+                        aliases,
+                        temp_counter,
+                        Tail::Discard,
+                    )?;
+                    out.push_str(&format!("while (true) {{\n{body}}}\n"));
                 } else if is_last && semi.is_none() {
                     out.push_str(&generate_tail_expr(
                         expr,
@@ -193,6 +227,28 @@ pub(super) fn generate_for(
         "for ({} {loop_var} = {start_str}; {loop_var} {cond_op} {end_str}; {loop_var}++) {{\n{body}}}\n",
         loop_ty.to_glsl()
     ))
+}
+
+pub(super) fn generate_while(
+    while_loop: &syn::ExprWhile,
+    env: &TypeEnv,
+    registry: &StructRegistry,
+    func_registry: &FuncRegistry,
+    aliases: &TypeAliasMap,
+    temp_counter: &mut usize,
+) -> Result<String, TranspileError> {
+    let (cond_str, _) = generate_expr(&while_loop.cond, env, registry, func_registry)?;
+    let mut loop_env = env.clone();
+    let body = generate_block(
+        &while_loop.body,
+        &mut loop_env,
+        registry,
+        func_registry,
+        aliases,
+        temp_counter,
+        Tail::Discard,
+    )?;
+    Ok(format!("while ({cond_str}) {{\n{body}}}\n"))
 }
 
 pub(super) fn infer_block_tail_type(

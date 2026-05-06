@@ -440,6 +440,154 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
     }
 
     #[test]
+    fn while_loop_with_comparison_condition() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let mut count = 0;
+    while count < 3 {
+        count += 1;
+    }
+    vec4(count as f32, 0.0, 0.0, 1.0)
+}",
+        );
+        assert!(out.contains("while ((count < 3))"));
+        assert!(out.contains("(count += 1)"));
+    }
+
+    #[test]
+    fn while_loop_with_bool_variable() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let mut running = true;
+    let mut x = 0.0;
+    while running {
+        x = x + 1.0;
+        running = false;
+    }
+    vec4(x, 0.0, 0.0, 1.0)
+}",
+        );
+        assert!(out.contains("while (running)"));
+    }
+
+    #[test]
+    fn while_loop_with_break() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let mut i = 0;
+    while i < 10 {
+        if i == 5 {
+            break;
+        }
+        i += 1;
+    }
+    vec4(i as f32, 0.0, 0.0, 1.0)
+}",
+        );
+        assert!(out.contains("while ((i < 10))"));
+        assert!(out.contains("break;"));
+    }
+
+    #[test]
+    fn while_loop_with_continue() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let mut sum = 0;
+    let mut i = 0;
+    while i < 6 {
+        i += 1;
+        if i == 3 {
+            continue;
+        }
+        sum += i;
+    }
+    vec4(sum as f32, 0.0, 0.0, 1.0)
+}",
+        );
+        assert!(out.contains("while ((i < 6))"));
+        assert!(out.contains("continue;"));
+    }
+
+    #[test]
+    fn for_loop_with_break() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let mut acc = 0;
+    for i in 0..10 {
+        if i == 4 {
+            break;
+        }
+        acc += 1;
+    }
+    vec4(acc as f32, 0.0, 0.0, 1.0)
+}",
+        );
+        assert!(out.contains("for (int i = 0; i < 10; i++)"));
+        assert!(out.contains("break;"));
+    }
+
+    #[test]
+    fn loop_translates_to_while_true() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let mut i = 0;
+    loop {
+        if i >= 5 {
+            break;
+        }
+        i += 1;
+    }
+    vec4(i as f32, 0.0, 0.0, 1.0)
+}",
+        );
+        assert!(out.contains("while (true)"));
+        assert!(out.contains("break;"));
+    }
+
+    #[test]
+    fn loop_with_continue() {
+        let out = glsl(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let mut i = 0;
+    loop {
+        i += 1;
+        if i < 3 {
+            continue;
+        }
+        break;
+    }
+    vec4(i as f32, 0.0, 0.0, 1.0)
+}",
+        );
+        assert!(out.contains("while (true)"));
+        assert!(out.contains("continue;"));
+        assert!(out.contains("break;"));
+    }
+
+    #[test]
+    fn error_labeled_break_is_unsupported() {
+        let err = transpile(
+            "\
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    let mut i = 0;
+    'outer: while i < 5 {
+        break 'outer;
+    }
+    vec4(0.0, 0.0, 0.0, 1.0)
+}",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TranspileError::UnsupportedSyntax(_)));
+    }
+
+    #[test]
     fn array_let_initializer_and_index_access() {
         let out = glsl(
             "\
