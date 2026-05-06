@@ -217,6 +217,68 @@ for i in 0..=5 {
 
 GLSL の C スタイル for ループに変換されます。
 
+### while ループ
+
+条件が `true` の間繰り返します。
+
+```rust
+let mut i = 0;
+while i < 10 {
+    i += 1;
+}
+```
+
+出力:
+```glsl
+int i = 0;
+while ((i < 10)) {
+    (i += 1);
+}
+```
+
+### loop
+
+条件なしの無限ループです。`break` で抜け出します。GLSL の `while (true)` に変換されます。
+
+```rust
+let mut i = 0;
+loop {
+    if i >= 5 {
+        break;
+    }
+    i += 1;
+}
+```
+
+出力:
+```glsl
+int i = 0;
+while (true) {
+    if ((i >= 5)) {
+        break;
+    }
+    (i += 1);
+}
+```
+
+### break / continue
+
+`break` はループを抜け、`continue` は次のイテレーションに進みます。`for`、`while`、`loop` すべてで使用できます。
+
+```rust
+for i in 0..10 {
+    if i == 3 {
+        continue;   // i == 3 をスキップ
+    }
+    if i == 7 {
+        break;      // i == 7 で終了
+    }
+    col.x += 0.1;
+}
+```
+
+> **制限:** ラベル付きの `break 'label;` / `continue 'label;` および値付きの `break value;` はサポートしていません。
+
 ---
 ## 演算子・キャスト
 
