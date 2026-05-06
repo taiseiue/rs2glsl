@@ -1240,4 +1240,127 @@ fn main_image(frag_coord: Vec2, resolution: Vec2) {
         assert!(matches!(err, TranspileError::ParseError(_)));
         assert_eq!(err.code(), "E0007");
     }
+
+    #[test]
+    fn bitwise_and_or_xor_emit_glsl_operators() {
+        let glsl = transpile_to_glsl(
+            "\
+fn hash(x: u32) -> u32 {
+    let a = x ^ x >> 17u32;
+    let b = a & 191u32;
+    b | 1u32
+}",
+        )
+        .unwrap();
+        assert!(glsl.contains("(x ^ (x >> 17u))"), "got: {glsl}");
+        assert!(glsl.contains("(a & 191u)"), "got: {glsl}");
+        assert!(glsl.contains("(b | 1u)"), "got: {glsl}");
+    }
+
+    #[test]
+    fn bitwise_not_on_integer_emits_tilde() {
+        let glsl = transpile_to_glsl(
+            "\
+fn invert(x: i32) -> i32 {
+    !x
+}",
+        )
+        .unwrap();
+        assert!(glsl.contains("(~x)"), "got: {glsl}");
+    }
+
+    #[test]
+    fn rem_on_float_emits_mod_function() {
+        let glsl = transpile_to_glsl(
+            "\
+fn tiled(uv: f32) -> f32 {
+    uv % 1.0
+}",
+        )
+        .unwrap();
+        assert!(glsl.contains("mod(uv, 1.0)"), "got: {glsl}");
+    }
+
+    #[test]
+    fn rem_on_integer_emits_percent_operator() {
+        let glsl = transpile_to_glsl(
+            "\
+fn wrap(x: i32, n: i32) -> i32 {
+    x % n
+}",
+        )
+        .unwrap();
+        assert!(glsl.contains("(x % n)"), "got: {glsl}");
+    }
+
+    #[test]
+    fn match_as_statement_emits_switch() {
+        let glsl = transpile_to_glsl(
+            "\
+fn select(mode: i32) -> f32 {
+    let mut result = 0.0;
+    match mode {
+        0 => { result = 1.0; }
+        1 => { result = 2.0; }
+        _ => { result = 3.0; }
+    }
+    result
+}",
+        )
+        .unwrap();
+        assert!(glsl.contains("switch (mode)"), "got: {glsl}");
+        assert!(glsl.contains("case 0:"), "got: {glsl}");
+        assert!(glsl.contains("case 1:"), "got: {glsl}");
+        assert!(glsl.contains("default:"), "got: {glsl}");
+    }
+
+    #[test]
+    fn match_as_let_initializer_emits_switch_with_assign() {
+        let glsl = transpile_to_glsl(
+            "\
+fn pick(mode: i32) -> f32 {
+    let result = match mode {
+        0 => 1.0,
+        _ => 0.0,
+    };
+    result
+}",
+        )
+        .unwrap();
+        assert!(glsl.contains("switch (mode)"), "got: {glsl}");
+        assert!(glsl.contains("case 0:"), "got: {glsl}");
+        assert!(glsl.contains("default:"), "got: {glsl}");
+        assert!(glsl.contains("break;"), "got: {glsl}");
+    }
+
+    #[test]
+    fn match_as_tail_expression_emits_switch_with_return() {
+        let glsl = transpile_to_glsl(
+            "\
+fn pick(mode: i32) -> f32 {
+    match mode {
+        0 => 1.0,
+        _ => 0.0,
+    }
+}",
+        )
+        .unwrap();
+        assert!(glsl.contains("switch (mode)"), "got: {glsl}");
+        assert!(glsl.contains("return 1.0;"), "got: {glsl}");
+        assert!(glsl.contains("return 0.0;"), "got: {glsl}");
+    }
+
+    #[test]
+    fn error_match_on_float_is_rejected() {
+        let err = transpile_to_glsl(
+            "\
+fn f(x: f32) -> f32 {
+    match x {
+        _ => 0.0,
+    }
+}",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TranspileError::UnsupportedSyntax(_)));
+    }
 }

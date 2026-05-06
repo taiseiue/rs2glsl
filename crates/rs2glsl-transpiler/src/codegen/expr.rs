@@ -15,6 +15,15 @@ pub(super) fn generate_expr(
         syn::Expr::Binary(bin) => {
             let (left, left_ty) = generate_expr(&bin.left, env, registry, func_registry)?;
             let (right, right_ty) = generate_expr(&bin.right, env, registry, func_registry)?;
+            if let syn::BinOp::Rem(_) = &bin.op {
+                let out_ty = infer_rem_type(&left_ty, &right_ty)?;
+                let out_str = if out_ty.is_integer() {
+                    format!("({left} % {right})")
+                } else {
+                    format!("mod({left}, {right})")
+                };
+                return Ok((out_str, out_ty));
+            }
             let (op, out_ty) = match &bin.op {
                 syn::BinOp::Add(_) => ("+", ty::infer_binop_type(&left_ty, &right_ty)?),
                 syn::BinOp::Sub(_) => ("-", ty::infer_binop_type(&left_ty, &right_ty)?),
@@ -50,6 +59,11 @@ pub(super) fn generate_expr(
                 syn::BinOp::Ge(_) => (">=", GlslType::Bool),
                 syn::BinOp::And(_) => ("&&", GlslType::Bool),
                 syn::BinOp::Or(_) => ("||", GlslType::Bool),
+                syn::BinOp::BitAnd(_) => ("&", validate_bitwise_type(&left_ty, &right_ty)?),
+                syn::BinOp::BitOr(_) => ("|", validate_bitwise_type(&left_ty, &right_ty)?),
+                syn::BinOp::BitXor(_) => ("^", validate_bitwise_type(&left_ty, &right_ty)?),
+                syn::BinOp::Shl(_) => ("<<", validate_shift_type(&left_ty, &right_ty)?),
+                syn::BinOp::Shr(_) => (">>", validate_shift_type(&left_ty, &right_ty)?),
                 _ => return Err(TranspileError::UnsupportedSyntax("binary operator")),
             };
             Ok((format!("({left} {op} {right})"), out_ty))
@@ -246,6 +260,7 @@ pub(super) fn generate_expr(
                     TranspileError::UnsupportedSyntax("cannot negate a uint"),
                 ),
                 syn::UnOp::Neg(_) => Ok((format!("(-{inner})"), inner_ty)),
+                syn::UnOp::Not(_) if inner_ty.is_integer() => Ok((format!("(~{inner})"), inner_ty)),
                 syn::UnOp::Not(_) => Ok((format!("(!{inner})"), GlslType::Bool)),
                 syn::UnOp::Deref(_) => Ok((inner, inner_ty)), // *x → x（deref を透過）
                 _ => Err(TranspileError::UnsupportedSyntax("unary operator")),
@@ -300,6 +315,13 @@ pub(super) fn infer_expr_type(
                 | syn::BinOp::Ge(_)
                 | syn::BinOp::And(_)
                 | syn::BinOp::Or(_) => Ok(GlslType::Bool),
+                syn::BinOp::BitAnd(_) | syn::BinOp::BitOr(_) | syn::BinOp::BitXor(_) => {
+                    validate_bitwise_type(&left_ty, &right_ty)
+                }
+                syn::BinOp::Shl(_) | syn::BinOp::Shr(_) => {
+                    validate_shift_type(&left_ty, &right_ty)
+                }
+                syn::BinOp::Rem(_) => infer_rem_type(&left_ty, &right_ty),
                 _ => Err(TranspileError::UnsupportedSyntax("binary operator")),
             }
         }
@@ -404,6 +426,7 @@ pub(super) fn infer_expr_type(
                     TranspileError::UnsupportedSyntax("cannot negate a uint"),
                 ),
                 syn::UnOp::Neg(_) | syn::UnOp::Deref(_) => Ok(inner_ty),
+                syn::UnOp::Not(_) if inner_ty.is_integer() => Ok(inner_ty),
                 syn::UnOp::Not(_) => Ok(GlslType::Bool),
                 _ => Err(TranspileError::UnsupportedSyntax("unary operator")),
             }
@@ -495,7 +518,7 @@ pub(super) fn coerce_expression_to_type(
     ))
 }
 
-fn normalize_int_literal(lit: &syn::LitInt) -> Result<(String, GlslType), TranspileError> {
+pub(super) fn normalize_int_literal(lit: &syn::LitInt) -> Result<(String, GlslType), TranspileError> {
     let suffix = lit.suffix();
     let mut raw = lit.to_string();
     if !suffix.is_empty() {
@@ -508,5 +531,32 @@ fn normalize_int_literal(lit: &syn::LitInt) -> Result<(String, GlslType), Transp
         _ => Err(TranspileError::UnsupportedSyntax(
             "unsupported integer literal suffix",
         )),
+    }
+}
+
+fn validate_bitwise_type(left: &GlslType, right: &GlslType) -> Result<GlslType, TranspileError> {
+    match (left.primitive(), right.primitive()) {
+        (GlslType::Int, GlslType::Int) => Ok(GlslType::Int),
+        (GlslType::Uint, GlslType::Uint) => Ok(GlslType::Uint),
+        _ => Err(TranspileError::UnsupportedSyntax(
+            "bitwise operators require both operands to have the same integer type (i32 or u32)",
+        )),
+    }
+}
+
+fn validate_shift_type(left: &GlslType, right: &GlslType) -> Result<GlslType, TranspileError> {
+    if !left.is_integer() || !right.is_integer() {
+        return Err(TranspileError::UnsupportedSyntax(
+            "shift operators require integer operands",
+        ));
+    }
+    Ok(left.clone())
+}
+
+fn infer_rem_type(left: &GlslType, right: &GlslType) -> Result<GlslType, TranspileError> {
+    match (left.primitive(), right.primitive()) {
+        (GlslType::Int, GlslType::Int) => Ok(GlslType::Int),
+        (GlslType::Uint, GlslType::Uint) => Ok(GlslType::Uint),
+        _ => ty::infer_binop_type(left, right),
     }
 }

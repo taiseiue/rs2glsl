@@ -45,6 +45,21 @@ pub(super) fn generate_block(
                         aliases,
                         temp_counter,
                     )?);
+                } else if let syn::Expr::Match(match_expr) = init_expr {
+                    let inferred_ty = infer_match_arm_type(match_expr, env, registry, func_registry)?;
+                    let ty = annotated_ty.unwrap_or(inferred_ty);
+                    env.insert(name.clone(), ty.clone());
+                    out.push_str(&format!("{};\n", ty.render_decl(&name)));
+                    let assign_name = name.clone();
+                    out.push_str(&generate_match(
+                        match_expr,
+                        Tail::Assign(&assign_name),
+                        env,
+                        registry,
+                        func_registry,
+                        aliases,
+                        temp_counter,
+                    )?);
                 } else {
                     let inferred_ty = infer_expr_type(init_expr, env, registry, func_registry)?;
                     let ty = annotated_ty.unwrap_or(inferred_ty);
@@ -128,6 +143,21 @@ pub(super) fn generate_block(
                         Tail::Discard,
                     )?;
                     out.push_str(&format!("while (true) {{\n{body}}}\n"));
+                } else if let syn::Expr::Match(match_expr) = expr {
+                    let match_tail = if is_last && semi.is_none() {
+                        tail
+                    } else {
+                        Tail::Discard
+                    };
+                    out.push_str(&generate_match(
+                        match_expr,
+                        match_tail,
+                        env,
+                        registry,
+                        func_registry,
+                        aliases,
+                        temp_counter,
+                    )?);
                 } else if is_last && semi.is_none() {
                     out.push_str(&generate_tail_expr(
                         expr,
@@ -718,4 +748,87 @@ fn next_index_name(counter: &mut usize) -> String {
     let name = format!("__rs2glsl_i{counter}");
     *counter += 1;
     name
+}
+
+pub(super) fn generate_match(
+    match_expr: &syn::ExprMatch,
+    tail: Tail<'_>,
+    env: &mut TypeEnv,
+    registry: &StructRegistry,
+    func_registry: &FuncRegistry,
+    aliases: &TypeAliasMap,
+    temp_counter: &mut usize,
+) -> Result<String, TranspileError> {
+    let (cond_str, cond_ty) = generate_expr(&match_expr.expr, env, registry, func_registry)?;
+    if !cond_ty.is_integer() {
+        return Err(TranspileError::UnsupportedSyntax(
+            "match expression requires an integer discriminant for GLSL switch",
+        ));
+    }
+
+    let mut arms_out = String::new();
+    for arm in &match_expr.arms {
+        if arm.guard.is_some() {
+            return Err(TranspileError::UnsupportedSyntax(
+                "match arm guards are not supported",
+            ));
+        }
+
+        let case_label = match_pattern_to_case_label(&arm.pat)?;
+
+        let arm_body = match arm.body.as_ref() {
+            syn::Expr::Block(block_expr) => {
+                let mut arm_env = env.clone();
+                generate_block(
+                    &block_expr.block,
+                    &mut arm_env,
+                    registry,
+                    func_registry,
+                    aliases,
+                    temp_counter,
+                    tail,
+                )?
+            }
+            expr => generate_tail_expr(expr, tail, env, registry, func_registry, temp_counter)?,
+        };
+
+        let needs_break = !matches!(tail, Tail::Return(_));
+        if needs_break {
+            arms_out.push_str(&format!("{case_label} {{\n{arm_body}break;\n}}\n"));
+        } else {
+            arms_out.push_str(&format!("{case_label} {{\n{arm_body}}}\n"));
+        }
+    }
+
+    Ok(format!("switch ({cond_str}) {{\n{arms_out}}}\n"))
+}
+
+fn match_pattern_to_case_label(pat: &syn::Pat) -> Result<String, TranspileError> {
+    match pat {
+        syn::Pat::Lit(expr_lit) => match &expr_lit.lit {
+            syn::Lit::Int(i) => Ok(format!("case {}:", i.base10_digits())),
+            _ => Err(TranspileError::UnsupportedSyntax(
+                "match pattern must be an integer literal or _",
+            )),
+        },
+        syn::Pat::Wild(_) => Ok("default:".to_string()),
+        _ => Err(TranspileError::UnsupportedSyntax(
+            "only integer literal patterns and _ are supported in match",
+        )),
+    }
+}
+
+fn infer_match_arm_type(
+    match_expr: &syn::ExprMatch,
+    env: &TypeEnv,
+    registry: &StructRegistry,
+    func_registry: &FuncRegistry,
+) -> Result<GlslType, TranspileError> {
+    let first_arm = match_expr.arms.first().ok_or(
+        TranspileError::UnsupportedSyntax("match must have at least one arm"),
+    )?;
+    match first_arm.body.as_ref() {
+        syn::Expr::Block(b) => infer_block_tail_type(&b.block, env, registry, func_registry),
+        expr => infer_expr_type(expr, env, registry, func_registry),
+    }
 }
