@@ -68,6 +68,9 @@ impl GlslType {
     }
 
     pub fn is_scalar_numeric(&self) -> bool {
-        matches!(self.primitive(), GlslType::Int | GlslType::Uint | GlslType::Float)
+        matches!(
+            self.primitive(),
+            GlslType::Int | GlslType::Uint | GlslType::Float
+        )
     }
 }

@@ -2,7 +2,7 @@ use super::expr::{coerce_expression_to_type, extract_ident, generate_expr};
 use super::stmt::generate_block;
 use super::structs::StructRegistry;
 use super::ty::{parse_param_type, parse_type};
-use super::{FuncRegistry, Tail, TypeAliasMap, TypeEnv};
+use super::{FuncRegistry, Tail, TypeAliasMap, TypeEnv, indent_block};
 use crate::errors::TranspileError;
 use crate::types::GlslType;
 
@@ -74,7 +74,10 @@ pub(super) fn generate_function(
         tail,
     )?;
 
-    Ok(format!("{ret} {glsl_name}({args}) {{\n{body}}}"))
+    Ok(format!(
+        "{ret} {glsl_name}({args}) {{\n{}}}",
+        indent_block(&body)
+    ))
 }
 
 fn build_function_signature(

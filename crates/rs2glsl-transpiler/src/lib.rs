@@ -58,7 +58,7 @@ mod tests {
         );
         assert_eq!(
             out,
-            "vec4 main_image(vec2 frag_coord, vec2 resolution, float time);\n\nvec4 main_image(vec2 frag_coord, vec2 resolution, float time) {\nreturn vec4(1.0, 0.0, 0.0, 1.0);\n}"
+            "vec4 main_image(vec2 frag_coord, vec2 resolution, float time);\n\nvec4 main_image(vec2 frag_coord, vec2 resolution, float time) {\n  return vec4(1.0, 0.0, 0.0, 1.0);\n}"
         );
     }
 
@@ -97,7 +97,7 @@ fn double(x: f32) -> f32 { x * 2.0 }",
             "vec4 main_image(vec2 frag_coord, vec2 resolution, float time);\nfloat double(float x);"
         ));
         assert!(out.contains("return vec4(double(time), 0.0, 0.0, 1.0);"));
-        assert!(out.contains("float double(float x) {\nreturn (x * 2.0);\n}"));
+        assert!(out.contains("float double(float x) {\n  return (x * 2.0);\n}"));
     }
 
     #[test]
@@ -187,6 +187,23 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         );
         // '}' の直前に空行がないこと
         assert!(!out.contains("\n\n}"));
+    }
+
+    #[test]
+    fn nested_blocks_use_two_space_indentation() {
+        let out = glsl(
+            "\
+fn classify(mode: i32) -> f32 {
+    match mode {
+        0 => {
+            let x = if mode == 0 { 1.0 } else { 2.0 };
+            x
+        }
+        _ => 0.0,
+    }
+}",
+        );
+        assert!(out.contains("  switch (mode) {\n    case 0: {\n      float x;\n      if ((mode == 0)) {\n        x = 1.0;\n      } else {\n        x = 2.0;\n      }\n      return x;\n    }\n    default: {\n      return 0.0;\n    }\n  }"));
     }
 
     // ── ビルトイン変数 ────────────────────────────────────────────────────
@@ -1022,7 +1039,9 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         .unwrap_err();
         assert!(matches!(
             err,
-            TranspileError::UnsupportedSyntax("arithmetic operands must have compatible numeric types")
+            TranspileError::UnsupportedSyntax(
+                "arithmetic operands must have compatible numeric types"
+            )
         ));
         assert_eq!(err.code(), "E0005");
     }

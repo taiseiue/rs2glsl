@@ -137,15 +137,9 @@ fn infer_scalar_or_vector_arithmetic_type(
         (GlslType::Vec2, GlslType::Vec2) => Ok(GlslType::Vec2),
         (GlslType::Vec3, GlslType::Vec3) => Ok(GlslType::Vec3),
         (GlslType::Vec4, GlslType::Vec4) => Ok(GlslType::Vec4),
-        (GlslType::Vec2, GlslType::Float) | (GlslType::Float, GlslType::Vec2) => {
-            Ok(GlslType::Vec2)
-        }
-        (GlslType::Vec3, GlslType::Float) | (GlslType::Float, GlslType::Vec3) => {
-            Ok(GlslType::Vec3)
-        }
-        (GlslType::Vec4, GlslType::Float) | (GlslType::Float, GlslType::Vec4) => {
-            Ok(GlslType::Vec4)
-        }
+        (GlslType::Vec2, GlslType::Float) | (GlslType::Float, GlslType::Vec2) => Ok(GlslType::Vec2),
+        (GlslType::Vec3, GlslType::Float) | (GlslType::Float, GlslType::Vec3) => Ok(GlslType::Vec3),
+        (GlslType::Vec4, GlslType::Float) | (GlslType::Float, GlslType::Vec4) => Ok(GlslType::Vec4),
         _ => Err(TranspileError::UnsupportedSyntax(
             "arithmetic operands must have compatible numeric types",
         )),

@@ -244,7 +244,9 @@ pub(super) fn generate_expr(
                 (GlslType::Float, GlslType::Uint) => {
                     Ok((format!("uint({expr_str})"), GlslType::Uint))
                 }
-                (GlslType::Int, GlslType::Uint) => Ok((format!("uint({expr_str})"), GlslType::Uint)),
+                (GlslType::Int, GlslType::Uint) => {
+                    Ok((format!("uint({expr_str})"), GlslType::Uint))
+                }
                 (GlslType::Uint, GlslType::Int) => Ok((format!("int({expr_str})"), GlslType::Int)),
                 (src, dst) if src == dst => Ok((expr_str, target_ty)),
                 _ => Err(TranspileError::UnsupportedSyntax(
@@ -256,9 +258,9 @@ pub(super) fn generate_expr(
         syn::Expr::Unary(u) => {
             let (inner, inner_ty) = generate_expr(&u.expr, env, registry, func_registry)?;
             match &u.op {
-                syn::UnOp::Neg(_) if matches!(inner_ty.primitive(), GlslType::Uint) => Err(
-                    TranspileError::UnsupportedSyntax("cannot negate a uint"),
-                ),
+                syn::UnOp::Neg(_) if matches!(inner_ty.primitive(), GlslType::Uint) => {
+                    Err(TranspileError::UnsupportedSyntax("cannot negate a uint"))
+                }
                 syn::UnOp::Neg(_) => Ok((format!("(-{inner})"), inner_ty)),
                 syn::UnOp::Not(_) if inner_ty.is_integer() => Ok((format!("(~{inner})"), inner_ty)),
                 syn::UnOp::Not(_) => Ok((format!("(!{inner})"), GlslType::Bool)),
@@ -318,9 +320,7 @@ pub(super) fn infer_expr_type(
                 syn::BinOp::BitAnd(_) | syn::BinOp::BitOr(_) | syn::BinOp::BitXor(_) => {
                     validate_bitwise_type(&left_ty, &right_ty)
                 }
-                syn::BinOp::Shl(_) | syn::BinOp::Shr(_) => {
-                    validate_shift_type(&left_ty, &right_ty)
-                }
+                syn::BinOp::Shl(_) | syn::BinOp::Shr(_) => validate_shift_type(&left_ty, &right_ty),
                 syn::BinOp::Rem(_) => infer_rem_type(&left_ty, &right_ty),
                 _ => Err(TranspileError::UnsupportedSyntax("binary operator")),
             }
@@ -422,9 +422,9 @@ pub(super) fn infer_expr_type(
         syn::Expr::Unary(u) => {
             let inner_ty = infer_expr_type(&u.expr, env, registry, func_registry)?;
             match &u.op {
-                syn::UnOp::Neg(_) if matches!(inner_ty.primitive(), GlslType::Uint) => Err(
-                    TranspileError::UnsupportedSyntax("cannot negate a uint"),
-                ),
+                syn::UnOp::Neg(_) if matches!(inner_ty.primitive(), GlslType::Uint) => {
+                    Err(TranspileError::UnsupportedSyntax("cannot negate a uint"))
+                }
                 syn::UnOp::Neg(_) | syn::UnOp::Deref(_) => Ok(inner_ty),
                 syn::UnOp::Not(_) if inner_ty.is_integer() => Ok(inner_ty),
                 syn::UnOp::Not(_) => Ok(GlslType::Bool),
@@ -518,7 +518,9 @@ pub(super) fn coerce_expression_to_type(
     ))
 }
 
-pub(super) fn normalize_int_literal(lit: &syn::LitInt) -> Result<(String, GlslType), TranspileError> {
+pub(super) fn normalize_int_literal(
+    lit: &syn::LitInt,
+) -> Result<(String, GlslType), TranspileError> {
     let suffix = lit.suffix();
     let mut raw = lit.to_string();
     if !suffix.is_empty() {

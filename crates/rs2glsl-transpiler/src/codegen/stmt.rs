@@ -1,7 +1,7 @@
 use super::expr::{coerce_expression_to_type, extract_ident, generate_expr, infer_expr_type};
 use super::structs::StructRegistry;
 use super::ty::{self, parse_type};
-use super::{FuncRegistry, Tail, TypeAliasMap, TypeEnv};
+use super::{FuncRegistry, Tail, TypeAliasMap, TypeEnv, indent_block};
 use crate::errors::TranspileError;
 use crate::types::GlslType;
 
@@ -46,7 +46,8 @@ pub(super) fn generate_block(
                         temp_counter,
                     )?);
                 } else if let syn::Expr::Match(match_expr) = init_expr {
-                    let inferred_ty = infer_match_arm_type(match_expr, env, registry, func_registry)?;
+                    let inferred_ty =
+                        infer_match_arm_type(match_expr, env, registry, func_registry)?;
                     let ty = annotated_ty.unwrap_or(inferred_ty);
                     env.insert(name.clone(), ty.clone());
                     out.push_str(&format!("{};\n", ty.render_decl(&name)));
@@ -142,7 +143,7 @@ pub(super) fn generate_block(
                         temp_counter,
                         Tail::Discard,
                     )?;
-                    out.push_str(&format!("while (true) {{\n{body}}}\n"));
+                    out.push_str(&format!("while (true) {{\n{}}}\n", indent_block(&body)));
                 } else if let syn::Expr::Match(match_expr) = expr {
                     let match_tail = if is_last && semi.is_none() {
                         tail
@@ -254,8 +255,9 @@ pub(super) fn generate_for(
     )?;
 
     Ok(format!(
-        "for ({} {loop_var} = {start_str}; {loop_var} {cond_op} {end_str}; {loop_var}++) {{\n{body}}}\n",
-        loop_ty.to_glsl()
+        "for ({} {loop_var} = {start_str}; {loop_var} {cond_op} {end_str}; {loop_var}++) {{\n{}}}\n",
+        loop_ty.to_glsl(),
+        indent_block(&body)
     ))
 }
 
@@ -278,7 +280,10 @@ pub(super) fn generate_while(
         temp_counter,
         Tail::Discard,
     )?;
-    Ok(format!("while ({cond_str}) {{\n{body}}}\n"))
+    Ok(format!(
+        "while ({cond_str}) {{\n{}}}\n",
+        indent_block(&body)
+    ))
 }
 
 pub(super) fn infer_block_tail_type(
@@ -333,7 +338,7 @@ pub(super) fn generate_if(
                     temp_counter,
                     tail,
                 )?;
-                format!(" else {{\n{body}}}")
+                format!(" else {{\n{}}}", indent_block(&body))
             }
             syn::Expr::If(nested) => {
                 format!(
@@ -353,7 +358,10 @@ pub(super) fn generate_if(
         },
     };
 
-    Ok(format!("if ({cond_str}) {{\n{then_body}}}{else_str}\n"))
+    Ok(format!(
+        "if ({cond_str}) {{\n{}}}{else_str}\n",
+        indent_block(&then_body)
+    ))
 }
 
 fn extract_local_binding(
@@ -552,7 +560,8 @@ fn emit_expr_into_target_with_indices(
             )?;
             indices.pop();
             Ok(format!(
-                "for (int {idx} = 0; {idx} < {len}; {idx}++) {{\n{body}}}\n"
+                "for (int {idx} = 0; {idx} < {len}; {idx}++) {{\n{}}}\n",
+                indent_block(&body)
             ))
         }
         _ => {
@@ -620,7 +629,8 @@ fn emit_compound_array_assign_with_indices(
             )?;
             indices.pop();
             Ok(format!(
-                "for (int {idx} = 0; {idx} < {len}; {idx}++) {{\n{body}}}\n"
+                "for (int {idx} = 0; {idx} < {len}; {idx}++) {{\n{}}}\n",
+                indent_block(&body)
             ))
         }
         _ => {
@@ -794,13 +804,21 @@ pub(super) fn generate_match(
 
         let needs_break = !matches!(tail, Tail::Return(_));
         if needs_break {
-            arms_out.push_str(&format!("{case_label} {{\n{arm_body}break;\n}}\n"));
+            let mut case_body = arm_body;
+            case_body.push_str("break;\n");
+            arms_out.push_str(&format!(
+                "{case_label} {{\n{}}}\n",
+                indent_block(&case_body)
+            ));
         } else {
-            arms_out.push_str(&format!("{case_label} {{\n{arm_body}}}\n"));
+            arms_out.push_str(&format!("{case_label} {{\n{}}}\n", indent_block(&arm_body)));
         }
     }
 
-    Ok(format!("switch ({cond_str}) {{\n{arms_out}}}\n"))
+    Ok(format!(
+        "switch ({cond_str}) {{\n{}}}\n",
+        indent_block(&arms_out)
+    ))
 }
 
 fn match_pattern_to_case_label(pat: &syn::Pat) -> Result<String, TranspileError> {
@@ -824,9 +842,12 @@ fn infer_match_arm_type(
     registry: &StructRegistry,
     func_registry: &FuncRegistry,
 ) -> Result<GlslType, TranspileError> {
-    let first_arm = match_expr.arms.first().ok_or(
-        TranspileError::UnsupportedSyntax("match must have at least one arm"),
-    )?;
+    let first_arm = match_expr
+        .arms
+        .first()
+        .ok_or(TranspileError::UnsupportedSyntax(
+            "match must have at least one arm",
+        ))?;
     match first_arm.body.as_ref() {
         syn::Expr::Block(b) => infer_block_tail_type(&b.block, env, registry, func_registry),
         expr => infer_expr_type(expr, env, registry, func_registry),

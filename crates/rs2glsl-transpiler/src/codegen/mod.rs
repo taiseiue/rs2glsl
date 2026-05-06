@@ -240,6 +240,18 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
     Ok(out)
 }
 
+pub(super) fn indent_block(code: &str) -> String {
+    code.split_inclusive('\n')
+        .map(|line| {
+            if line == "\n" {
+                "\n".to_string()
+            } else {
+                format!("  {line}")
+            }
+        })
+        .collect()
+}
+
 fn append_section(out: &mut String, items: &[String], separator: &str) {
     if items.is_empty() {
         return;
