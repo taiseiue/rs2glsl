@@ -17,12 +17,50 @@ pub struct Color {
     b: f32,
 }
 
-pub fn point(x: f32, y: f32) -> Point {
-    Point { x, y }
+impl Add for Point {
+    type Output = Point;
+
+    fn add(self, rhs: Point) -> Point {
+        Point {
+            x: self.x + rhs.x,
+            y: self.y + rhs.y,
+        }
+    }
 }
 
-pub fn color(r: f32, g: f32, b: f32) -> Color {
-    Color { r, g, b }
+impl Sub for Point {
+    type Output = Point;
+
+    fn sub(self, rhs: Point) -> Point {
+        Point {
+            x: self.x - rhs.x,
+            y: self.y - rhs.y,
+        }
+    }
+}
+
+impl Add for Color {
+    type Output = Color;
+
+    fn add(self, rhs: Color) -> Color {
+        Color {
+            r: self.r + rhs.r,
+            g: self.g + rhs.g,
+            b: self.b + rhs.b,
+        }
+    }
+}
+
+impl Sub for Color {
+    type Output = Color;
+
+    fn sub(self, rhs: Color) -> Color {
+        Color {
+            r: self.r - rhs.r,
+            g: self.g - rhs.g,
+            b: self.b - rhs.b,
+        }
+    }
 }
 
 pub fn uv_from_frag(frag_coord: Point, resolution: Point) -> Point {
