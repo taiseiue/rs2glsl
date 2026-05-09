@@ -9,12 +9,14 @@ pub(super) fn parse_param_type(
     registry: &StructRegistry,
     aliases: &TypeAliasMap,
 ) -> Result<(GlslType, bool), TranspileError> {
-    match ty {
+    let result = match ty {
         syn::Type::Reference(r) if r.mutability.is_some() => {
             Ok((parse_type(&r.elem, registry, aliases)?, true))
         }
         _ => Ok((parse_type(ty, registry, aliases)?, false)),
-    }
+    };
+
+    result.map_err(|e: TranspileError| e.with_span(ty))
 }
 
 pub(super) fn parse_type(
@@ -22,43 +24,45 @@ pub(super) fn parse_type(
     registry: &StructRegistry,
     aliases: &TypeAliasMap,
 ) -> Result<GlslType, TranspileError> {
-    if let syn::Type::Array(array) = ty {
+    let result = if let syn::Type::Array(array) = ty {
         let inner = parse_type(&array.elem, registry, aliases)?;
-        return Ok(GlslType::Array(
+        Ok(GlslType::Array(
             Box::new(inner),
             parse_array_len(&array.len)?,
-        ));
-    }
-
-    let ident = match ty {
-        syn::Type::Path(p) => &p.path.segments.last().unwrap().ident,
-        _ => return Err(TranspileError::UnsupportedSyntax("non-path type")),
-    };
-    match ident.to_string().as_str() {
-        "bool" => Ok(GlslType::Bool),
-        "i32" => Ok(GlslType::Int),
-        "u32" => Ok(GlslType::Uint),
-        "f32" => Ok(GlslType::Float),
-        "Vec2" => Ok(GlslType::Vec2),
-        "Vec3" => Ok(GlslType::Vec3),
-        "Vec4" => Ok(GlslType::Vec4),
-        name => {
-            if let Some(glsl_ty) = aliases.get(name) {
-                Ok(glsl_ty.clone())
-            } else if let Some(def) = registry.get(name) {
-                Ok(GlslType::Struct(
-                    name.to_string(),
-                    Box::new(def.glsl_type.clone()),
-                ))
-            } else {
-                Err(TranspileError::UnsupportedType(name.to_string()))
+        ))
+    } else {
+        let ident = match ty {
+            syn::Type::Path(p) => &p.path.segments.last().unwrap().ident,
+            _ => return Err(TranspileError::UnsupportedSyntax("non-path type").with_span(ty)),
+        };
+        match ident.to_string().as_str() {
+            "bool" => Ok(GlslType::Bool),
+            "i32" => Ok(GlslType::Int),
+            "u32" => Ok(GlslType::Uint),
+            "f32" => Ok(GlslType::Float),
+            "Vec2" => Ok(GlslType::Vec2),
+            "Vec3" => Ok(GlslType::Vec3),
+            "Vec4" => Ok(GlslType::Vec4),
+            name => {
+                if let Some(glsl_ty) = aliases.get(name) {
+                    Ok(glsl_ty.clone())
+                } else if let Some(def) = registry.get(name) {
+                    Ok(GlslType::Struct(
+                        name.to_string(),
+                        Box::new(def.glsl_type.clone()),
+                    ))
+                } else {
+                    Err(TranspileError::UnsupportedType(name.to_string()))
+                }
             }
         }
-    }
+    };
+
+    result.map_err(|e: TranspileError| e.with_span(ty))
 }
 
 pub(super) fn parse_array_len(len: &syn::Expr) -> Result<usize, TranspileError> {
-    match len {
+    let result = match len {
         syn::Expr::Lit(expr_lit) => match &expr_lit.lit {
             syn::Lit::Int(int) => {
                 let len = int.base10_parse().map_err(|_| {
@@ -79,7 +83,9 @@ pub(super) fn parse_array_len(len: &syn::Expr) -> Result<usize, TranspileError> 
         _ => Err(TranspileError::UnsupportedSyntax(
             "array length must be an integer literal",
         )),
-    }
+    };
+
+    result.map_err(|e: TranspileError| e.with_span(len))
 }
 
 pub(super) fn infer_arithmetic_type(

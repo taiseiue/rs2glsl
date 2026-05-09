@@ -11,7 +11,7 @@ pub(super) fn generate_expr(
     registry: &StructRegistry,
     func_registry: &FuncRegistry,
 ) -> Result<(String, GlslType), TranspileError> {
-    match expr {
+    let result = match expr {
         syn::Expr::Binary(bin) => {
             let (left, left_ty) = generate_expr(&bin.left, env, registry, func_registry)?;
             let (right, right_ty) = generate_expr(&bin.right, env, registry, func_registry)?;
@@ -285,7 +285,9 @@ pub(super) fn generate_expr(
         }
 
         _ => Err(TranspileError::UnsupportedSyntax("expression kind")),
-    }
+    };
+
+    result.map_err(|e: TranspileError| e.with_span(expr))
 }
 
 pub(super) fn infer_expr_type(
@@ -294,7 +296,7 @@ pub(super) fn infer_expr_type(
     registry: &StructRegistry,
     func_registry: &FuncRegistry,
 ) -> Result<GlslType, TranspileError> {
-    match expr {
+    let result = match expr {
         syn::Expr::Binary(bin) => {
             let left_ty = infer_expr_type(&bin.left, env, registry, func_registry)?;
             let right_ty = infer_expr_type(&bin.right, env, registry, func_registry)?;
@@ -439,15 +441,19 @@ pub(super) fn infer_expr_type(
         },
         syn::Expr::Paren(p) => infer_expr_type(&p.expr, env, registry, func_registry),
         _ => Err(TranspileError::UnsupportedSyntax("expression kind")),
-    }
+    };
+
+    result.map_err(|e: TranspileError| e.with_span(expr))
 }
 
 pub(super) fn extract_ident(pat: &syn::Pat) -> Result<String, TranspileError> {
-    match pat {
+    let result = match pat {
         syn::Pat::Ident(i) => Ok(i.ident.to_string()),
         syn::Pat::Type(t) => extract_ident(&t.pat),
         _ => Err(TranspileError::UnsupportedSyntax("non-ident pattern")),
-    }
+    };
+
+    result.map_err(|e: TranspileError| e.with_span(pat))
 }
 
 fn expect_int_index(ty: &GlslType) -> Result<(), TranspileError> {
@@ -527,13 +533,15 @@ pub(super) fn normalize_int_literal(
         raw.truncate(raw.len() - suffix.len());
     }
 
-    match suffix {
+    let result = match suffix {
         "" | "i32" => Ok((raw, GlslType::Int)),
         "u32" => Ok((format!("{raw}u"), GlslType::Uint)),
         _ => Err(TranspileError::UnsupportedSyntax(
             "unsupported integer literal suffix",
         )),
-    }
+    };
+
+    result.map_err(|e: TranspileError| e.with_span(lit))
 }
 
 fn validate_bitwise_type(left: &GlslType, right: &GlslType) -> Result<GlslType, TranspileError> {

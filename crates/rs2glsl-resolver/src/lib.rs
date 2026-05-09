@@ -129,6 +129,7 @@ fn resolve_entry(entry_path: &Path, config: &ResolveConfig) -> Result<String, Re
 struct ResolveConfig {
     cargo_home: PathBuf,
     lockfile_path: Option<PathBuf>,
+    local_workspace_root: Option<PathBuf>,
 }
 
 impl ResolveConfig {
@@ -136,6 +137,7 @@ impl ResolveConfig {
         Ok(Self {
             cargo_home: detect_cargo_home()?,
             lockfile_path: find_ancestor_file(entry_path, "Cargo.lock"),
+            local_workspace_root: detect_local_workspace_root()?,
         })
     }
 }
@@ -413,6 +415,14 @@ impl ModuleLoader {
             return Ok(path.clone());
         }
 
+        if let Some(workspace_root) = &self.config.local_workspace_root {
+            if let Some(lib_path) = find_package_lib_in_repo(workspace_root, crate_name)? {
+                self.external_libs
+                    .insert(crate_name.to_string(), lib_path.clone());
+                return Ok(lib_path);
+            }
+        }
+
         let package = self.lockfile()?.find_package(crate_name)?;
         let source =
             package
@@ -505,8 +515,17 @@ impl FlatEmitter {
 fn parse_file(path: &Path) -> Result<Vec<Item>, ResolveError> {
     let source = fs::read_to_string(path)
         .map_err(|e| ResolveError::FileRead(path.to_path_buf(), e.to_string()))?;
-    let file = syn::parse_file(&source)
-        .map_err(|e| ResolveError::Parse(path.to_path_buf(), e.to_string()))?;
+    let file = syn::parse_file(&source).map_err(|e| {
+        let start = e.span().start();
+        ResolveError::Parse(
+            path.to_path_buf(),
+            e.to_string(),
+            Some(SourceLocation {
+                line: start.line,
+                column: start.column + 1,
+            }),
+        )
+    })?;
     Ok(file.items)
 }
 
@@ -670,6 +689,24 @@ fn detect_cargo_home() -> Result<PathBuf, ResolveError> {
     Err(ResolveError::MissingCargoHome)
 }
 
+fn detect_local_workspace_root() -> Result<Option<PathBuf>, ResolveError> {
+    let mut current = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    loop {
+        let manifest_path = current.join("Cargo.toml");
+        if manifest_path.is_file() {
+            let manifest = parse_manifest(&manifest_path)?;
+            if manifest.workspace.is_some() {
+                return Ok(Some(current));
+            }
+        }
+
+        if !current.pop() {
+            return Ok(None);
+        }
+    }
+}
+
 fn find_ancestor_file(path: &Path, file_name: &str) -> Option<PathBuf> {
     let mut current = if path.is_dir() {
         path.to_path_buf()
@@ -703,12 +740,18 @@ struct Lockfile {
     packages: Vec<LockPackageEntry>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct SourceLocation {
+    line: usize,
+    column: usize,
+}
+
 impl Lockfile {
     fn from_path(path: &Path) -> Result<Self, ResolveError> {
         let source = fs::read_to_string(path)
             .map_err(|e| ResolveError::FileRead(path.to_path_buf(), e.to_string()))?;
         let parsed: ParsedLockfile = toml::from_str(&source)
-            .map_err(|e| ResolveError::Parse(path.to_path_buf(), e.to_string()))?;
+            .map_err(|e| ResolveError::Parse(path.to_path_buf(), e.to_string(), None))?;
         Ok(Self {
             packages: parsed.package,
         })
@@ -834,7 +877,7 @@ fn find_package_lib_in_repo(
         let Some(package) = manifest.package else {
             continue;
         };
-        if package.name != package_name {
+        if package.name != package_name && normalize_package_name(&package.name) != package_name {
             continue;
         }
 
@@ -900,6 +943,7 @@ fn find_manifest_paths(root: &Path) -> Result<Vec<PathBuf>, ResolveError> {
 struct ParsedManifest {
     package: Option<ManifestPackage>,
     lib: Option<ManifestLib>,
+    workspace: Option<ManifestWorkspace>,
     #[serde(default)]
     bin: Vec<ManifestBin>,
 }
@@ -915,6 +959,9 @@ struct ManifestLib {
 }
 
 #[derive(Deserialize)]
+struct ManifestWorkspace {}
+
+#[derive(Deserialize)]
 struct ManifestBin {
     path: Option<String>,
 }
@@ -922,7 +969,7 @@ struct ManifestBin {
 fn parse_manifest(path: &Path) -> Result<ParsedManifest, ResolveError> {
     let source = fs::read_to_string(path)
         .map_err(|e| ResolveError::FileRead(path.to_path_buf(), e.to_string()))?;
-    toml::from_str(&source).map_err(|e| ResolveError::Parse(path.to_path_buf(), e.to_string()))
+    toml::from_str(&source).map_err(|e| ResolveError::Parse(path.to_path_buf(), e.to_string(), None))
 }
 
 #[derive(Debug)]
@@ -963,7 +1010,7 @@ pub enum ResolveError {
         module: String,
         searched_from: PathBuf,
     },
-    Parse(PathBuf, String),
+    Parse(PathBuf, String, Option<SourceLocation>),
     ProjectEntryNotFound {
         project_path: PathBuf,
         manifest_path: Option<PathBuf>,
@@ -1060,7 +1107,14 @@ impl fmt::Display for ResolveError {
                 "Module not found for `{module}` under {}",
                 searched_from.display()
             ),
-            Self::Parse(path, err) => write!(f, "Parse error ({}): {err}", path.display()),
+            Self::Parse(path, err, Some(location)) => write!(
+                f,
+                "Parse error ({}:{}:{}): {err}",
+                path.display(),
+                location.line,
+                location.column
+            ),
+            Self::Parse(path, err, None) => write!(f, "Parse error ({}): {err}", path.display()),
             Self::ProjectEntryNotFound {
                 project_path,
                 manifest_path,
@@ -1439,6 +1493,7 @@ fn square(x: f32) -> f32 {
         let config = ResolveConfig {
             cargo_home,
             lockfile_path: Some(lockfile),
+            local_workspace_root: None,
         };
         let source = resolve_entry(&entry, &config).expect("resolve failed");
 
@@ -1450,6 +1505,100 @@ fn square(x: f32) -> f32 {
         assert!(glsl.contains("float double(float x);"));
         assert!(glsl.contains("float square(float x);"));
         assert!(glsl.contains("return vec4(double(time), 0.0, 0.0, 1.0);"));
+
+        fs::remove_dir_all(dir).expect("failed to clean temp dir");
+    }
+
+    #[test]
+    fn prefers_local_workspace_crate_over_git_checkout() {
+        let dir = temp_dir_path("local-workspace-override");
+        let cargo_home = dir.join("cargo-home");
+        let project_root = dir.join("project");
+        let workspace_root = dir.join("workspace");
+        let entry = project_root.join("shader.rs");
+        let lockfile = project_root.join("Cargo.lock");
+        let checkout = cargo_home
+            .join("git")
+            .join("checkouts")
+            .join("rs2glsl-deadbeef")
+            .join("ed449fe");
+        let checkout_manifest = checkout.join("Cargo.toml");
+        let checkout_lib = checkout.join("src").join("lib.rs");
+        let workspace_manifest = workspace_root.join("Cargo.toml");
+        let workspace_lib = workspace_root.join("crates").join("rs2glsl-prelude").join("src").join("lib.rs");
+
+        write_file(
+            &entry,
+            "\
+use rs2glsl_prelude::*;
+
+fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
+    vec4(double(time), 0.0, 0.0, 1.0)
+}
+",
+        );
+        write_file(
+            &lockfile,
+            "\
+version = 4
+
+[[package]]
+name = \"rs2glsl-prelude\"
+version = \"0.1.0\"
+source = \"git+https://github.com/taiseiue/rs2glsl#ed449fe7aac09a8df92cf4950d6f4231047269fa\"
+",
+        );
+        write_file(
+            &checkout_manifest,
+            "\
+[package]
+name = \"rs2glsl-prelude\"
+version = \"0.1.0\"
+edition = \"2024\"
+",
+        );
+        write_file(
+            &checkout_lib,
+            "\
+fn double(x: f32) -> f32 {
+    x
+}
+",
+        );
+        write_file(
+            &workspace_manifest,
+            "\
+[workspace]
+members = [\"crates/rs2glsl-prelude\"]
+",
+        );
+        write_file(
+            &workspace_root.join("crates").join("rs2glsl-prelude").join("Cargo.toml"),
+            "\
+[package]
+name = \"rs2glsl-prelude\"
+version = \"0.1.0\"
+edition = \"2024\"
+",
+        );
+        write_file(
+            &workspace_lib,
+            "\
+fn double(x: f32) -> f32 {
+    x * 2.0
+}
+",
+        );
+
+        let config = ResolveConfig {
+            cargo_home,
+            lockfile_path: Some(lockfile),
+            local_workspace_root: Some(workspace_root.clone()),
+        };
+        let source = resolve_entry(&entry, &config).expect("resolve failed");
+
+        assert!(source.contains("x * 2.0"));
+        assert!(!source.contains("fn double(x: f32) -> f32 {\n    x\n}"));
 
         fs::remove_dir_all(dir).expect("failed to clean temp dir");
     }

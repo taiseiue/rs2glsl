@@ -11,10 +11,13 @@ pub(super) struct StructDef {
 pub(super) type StructRegistry = HashMap<String, StructDef>;
 
 pub(super) fn parse_struct(item: &syn::ItemStruct) -> Result<(String, StructDef), TranspileError> {
-    let name = item.ident.to_string();
-    let glsl_type = parse_repr_attr(item)?;
-    let fields = parse_fields(item)?;
-    Ok((name, StructDef { glsl_type, fields }))
+    (|| -> Result<(String, StructDef), TranspileError> {
+        let name = item.ident.to_string();
+        let glsl_type = parse_repr_attr(item)?;
+        let fields = parse_fields(item)?;
+        Ok((name, StructDef { glsl_type, fields }))
+    })()
+    .map_err(|e: TranspileError| e.with_span(item))
 }
 
 fn parse_repr_attr(item: &syn::ItemStruct) -> Result<GlslType, TranspileError> {
@@ -22,6 +25,7 @@ fn parse_repr_attr(item: &syn::ItemStruct) -> Result<GlslType, TranspileError> {
         if attr.path().is_ident("structlayout") {
             let ident: syn::Ident = attr.parse_args().map_err(|_| {
                 TranspileError::UnsupportedSyntax("#[structlayout] requires a type name")
+                    .with_span(attr)
             })?;
             return match ident.to_string().as_str() {
                 "vec2" => Ok(GlslType::Vec2),
@@ -29,26 +33,23 @@ fn parse_repr_attr(item: &syn::ItemStruct) -> Result<GlslType, TranspileError> {
                 "vec4" => Ok(GlslType::Vec4),
                 _ => Err(TranspileError::UnsupportedSyntax(
                     "#[structlayout] must be vec2, vec3, or vec4",
-                )),
+                )
+                .with_span(attr)),
             };
         }
     }
-    Err(TranspileError::MissingReprAttr(item.ident.to_string()))
+    Err(TranspileError::MissingReprAttr(item.ident.to_string()).with_span(item))
 }
 
 fn parse_fields(item: &syn::ItemStruct) -> Result<HashMap<String, usize>, TranspileError> {
     let syn::Fields::Named(named) = &item.fields else {
-        return Err(TranspileError::UnsupportedSyntax(
-            "struct must have named fields",
-        ));
+        return Err(TranspileError::UnsupportedSyntax("struct must have named fields").with_span(item));
     };
 
     let mut fields = HashMap::new();
     for (decl_idx, field) in named.named.iter().enumerate() {
         if !is_f32(&field.ty) {
-            return Err(TranspileError::UnsupportedSyntax(
-                "struct fields must be f32",
-            ));
+            return Err(TranspileError::UnsupportedSyntax("struct fields must be f32").with_span(&field.ty));
         }
         let field_name = field.ident.as_ref().unwrap().to_string();
         let component = parse_component_attr(field).unwrap_or(decl_idx);

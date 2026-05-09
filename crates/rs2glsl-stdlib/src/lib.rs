@@ -147,14 +147,10 @@ pub fn clampf(x: f32, lo: f32, hi: f32) -> f32 {
     min(max(x, lo), hi)
 }
 
-pub fn add_color(a: Color, b: Color) -> Color {
-    color(a.r + b.r, a.g + b.g, a.b + b.b)
-}
-
 pub fn mul_color(c: Color, k: f32) -> Color {
-    color(c.r * k, c.g * k, c.b * k)
+    Color { r: c.r * k, g: c.g * k, b: c.b * k }
 }
 
 pub fn mix_color(a: Color, b: Color, t: f32) -> Color {
-    color(mix(a.r, b.r, t), mix(a.g, b.g, t), mix(a.b, b.b, t))
+    Color { r: mix(a.r, b.r, t), g: mix(a.g, b.g, t), b: mix(a.b, b.b, t) }
 }

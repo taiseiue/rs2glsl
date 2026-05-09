@@ -1,5 +1,5 @@
 [package]
-name = "rs2glsl-cli"
+name = "cargo-rs2glsl"
 version = "0.1.0"
 edition = "2024"
 

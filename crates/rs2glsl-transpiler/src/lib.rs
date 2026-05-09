@@ -2,13 +2,12 @@ mod codegen;
 mod errors;
 mod types;
 
-pub use errors::TranspileError;
+pub use errors::{SourceLocation, TranspileError, TranspileErrorKind};
 
 pub fn transpile_to_glsl(source: &str) -> Result<String, TranspileError> {
     // `static NAME: TYPE;`（値なし）はsynがパースできないので `= ()` を補完する
     let preprocessed = preprocess(source);
-    let file =
-        syn::parse_file(&preprocessed).map_err(|e| TranspileError::ParseError(e.to_string()))?;
+    let file = syn::parse_file(&preprocessed).map_err(TranspileError::from_syn)?;
     codegen::generate(&file)
 }
 
@@ -601,7 +600,7 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
 }",
         )
         .unwrap_err();
-        assert!(matches!(err, TranspileError::UnsupportedSyntax(_)));
+        assert!(matches!(err.kind(), TranspileErrorKind::UnsupportedSyntax(_)));
     }
 
     #[test]
@@ -945,14 +944,21 @@ const X: f32 = 2.0;
 fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 { vec4(1.0, 0.0, 0.0, 1.0) }",
         )
         .unwrap_err();
-        assert!(matches!(err, TranspileError::DuplicateConst(ref n) if n == "X"));
+        assert!(matches!(
+            err.kind(),
+            TranspileErrorKind::DuplicateConst(n) if n == "X"
+        ));
         assert_eq!(err.code(), "E0002");
+        assert_eq!(err.location(), Some(SourceLocation { line: 2, column: 1 }));
     }
 
     #[test]
     fn error_unsupported_type() {
         let err = transpile_to_glsl("fn main_image(frag_coord: Vec2, resolution: Vec2, time: UnknownType) -> Vec4 { vec4(1.0, 0.0, 0.0, 1.0) }").unwrap_err();
-        assert!(matches!(err, TranspileError::UnsupportedType(ref t) if t == "UnknownType"));
+        assert!(matches!(
+            err.kind(),
+            TranspileErrorKind::UnsupportedType(t) if t == "UnknownType"
+        ));
         assert_eq!(err.code(), "E0003");
     }
 
@@ -962,7 +968,10 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 { vec4(1.0,
             "fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 { ghost }",
         )
         .unwrap_err();
-        assert!(matches!(err, TranspileError::UnknownVariable(ref v) if v == "ghost"));
+        assert!(matches!(
+            err.kind(),
+            TranspileErrorKind::UnknownVariable(v) if v == "ghost"
+        ));
         assert_eq!(err.code(), "E0004");
     }
 
@@ -981,8 +990,8 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         )
         .unwrap_err();
         assert!(matches!(
-            err,
-            TranspileError::UnsupportedSyntax("for loop iterable must be a range")
+            err.kind(),
+            TranspileErrorKind::UnsupportedSyntax("for loop iterable must be a range")
         ));
         assert_eq!(err.code(), "E0005");
     }
@@ -1001,8 +1010,8 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         )
         .unwrap_err();
         assert!(matches!(
-            err,
-            TranspileError::UnsupportedSyntax("for loop start bound must be an integer")
+            err.kind(),
+            TranspileErrorKind::UnsupportedSyntax("for loop start bound must be an integer")
         ));
         assert_eq!(err.code(), "E0005");
     }
@@ -1018,8 +1027,8 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         )
         .unwrap_err();
         assert!(matches!(
-            err,
-            TranspileError::UnsupportedSyntax(
+            err.kind(),
+            TranspileErrorKind::UnsupportedSyntax(
                 "unsupported cast; only int/uint/float scalar casts are supported"
             )
         ));
@@ -1038,8 +1047,8 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         )
         .unwrap_err();
         assert!(matches!(
-            err,
-            TranspileError::UnsupportedSyntax(
+            err.kind(),
+            TranspileErrorKind::UnsupportedSyntax(
                 "arithmetic operands must have compatible numeric types"
             )
         ));
@@ -1057,8 +1066,8 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         )
         .unwrap_err();
         assert!(matches!(
-            err,
-            TranspileError::UnsupportedSyntax("cannot negate a uint")
+            err.kind(),
+            TranspileErrorKind::UnsupportedSyntax("cannot negate a uint")
         ));
         assert_eq!(err.code(), "E0005");
     }
@@ -1074,8 +1083,8 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         )
         .unwrap_err();
         assert!(matches!(
-            err,
-            TranspileError::UnsupportedSyntax("array index must be an integer")
+            err.kind(),
+            TranspileErrorKind::UnsupportedSyntax("array index must be an integer")
         ));
         assert_eq!(err.code(), "E0005");
     }
@@ -1091,8 +1100,8 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         )
         .unwrap_err();
         assert!(matches!(
-            err,
-            TranspileError::UnsupportedSyntax("GLSL does not support zero-length array literals")
+            err.kind(),
+            TranspileErrorKind::UnsupportedSyntax("GLSL does not support zero-length array literals")
         ));
         assert_eq!(err.code(), "E0005");
     }
@@ -1108,8 +1117,8 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         )
         .unwrap_err();
         assert!(matches!(
-            err,
-            TranspileError::UnsupportedSyntax("GLSL does not support zero-length arrays")
+            err.kind(),
+            TranspileErrorKind::UnsupportedSyntax("GLSL does not support zero-length arrays")
         ));
         assert_eq!(err.code(), "E0005");
     }
@@ -1127,8 +1136,8 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         )
         .unwrap_err();
         assert!(matches!(
-            err,
-            TranspileError::UnsupportedSyntax("array operands must have the same shape")
+            err.kind(),
+            TranspileErrorKind::UnsupportedSyntax("array operands must have the same shape")
         ));
         assert_eq!(err.code(), "E0005");
     }
@@ -1146,8 +1155,8 @@ fn main_image(frag_coord: Vec2, resolution: Vec2) -> Vec4 {
         )
         .unwrap_err();
         assert!(matches!(
-            err,
-            TranspileError::UnsupportedSyntax(
+            err.kind(),
+            TranspileErrorKind::UnsupportedSyntax(
                 "#[builtin], #[uniform], and #[out] are mutually exclusive"
             )
         ));
@@ -1166,8 +1175,8 @@ fn main_image(frag_coord: Vec2, resolution: Vec2) -> Vec4 {
         )
         .unwrap_err();
         assert!(matches!(
-            err,
-            TranspileError::UnsupportedSyntax(
+            err.kind(),
+            TranspileErrorKind::UnsupportedSyntax(
                 "#[builtin] requires a GLSL name string: #[builtin(\"iResolution\")]"
             )
         ));
@@ -1186,8 +1195,8 @@ fn main_image(frag_coord_in: Vec2, resolution: Vec2) -> Vec4 {
         )
         .unwrap_err();
         assert!(matches!(
-            err,
-            TranspileError::UnsupportedSyntax(
+            err.kind(),
+            TranspileErrorKind::UnsupportedSyntax(
                 "#[builtin] GLSL names must be dot-separated C identifiers"
             )
         ));
@@ -1206,8 +1215,8 @@ fn main_image(frag_coord: Vec2, resolution: Vec2, time: f32) -> Vec4 {
         )
         .unwrap_err();
         assert!(matches!(
-            err,
-            TranspileError::UnsupportedSyntax(
+            err.kind(),
+            TranspileErrorKind::UnsupportedSyntax(
                 "#[builtin] requires a GLSL name string: #[builtin(\"iResolution\")]"
             )
         ));
@@ -1226,8 +1235,8 @@ fn main_image(frag_coord: Vec2, resolution: Vec2) {
         )
         .unwrap_err();
         assert!(matches!(
-            err,
-            TranspileError::UnsupportedSyntax("#[out] requires `static mut`")
+            err.kind(),
+            TranspileErrorKind::UnsupportedSyntax("#[out] requires `static mut`")
         ));
         assert_eq!(err.code(), "E0005");
     }
@@ -1245,8 +1254,8 @@ fn main_image(frag_coord: Vec2, resolution: Vec2) {
         )
         .unwrap_err();
         assert!(matches!(
-            err,
-            TranspileError::UnsupportedSyntax(
+            err.kind(),
+            TranspileErrorKind::UnsupportedSyntax(
                 "#[builtin], #[uniform], and #[out] are mutually exclusive"
             )
         ));
@@ -1256,8 +1265,9 @@ fn main_image(frag_coord: Vec2, resolution: Vec2) {
     #[test]
     fn error_parse_error() {
         let err = transpile_to_glsl("this is not rust @@@").unwrap_err();
-        assert!(matches!(err, TranspileError::ParseError(_)));
+        assert!(matches!(err.kind(), TranspileErrorKind::ParseError(_)));
         assert_eq!(err.code(), "E0007");
+        assert_eq!(err.location(), Some(SourceLocation { line: 1, column: 6 }));
     }
 
     #[test]
@@ -1380,6 +1390,6 @@ fn f(x: f32) -> f32 {
 }",
         )
         .unwrap_err();
-        assert!(matches!(err, TranspileError::UnsupportedSyntax(_)));
+        assert!(matches!(err.kind(), TranspileErrorKind::UnsupportedSyntax(_)));
     }
 }

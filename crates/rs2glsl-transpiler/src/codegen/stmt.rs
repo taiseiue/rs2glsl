@@ -14,176 +14,179 @@ pub(super) fn generate_block(
     temp_counter: &mut usize,
     tail: Tail<'_>,
 ) -> Result<String, TranspileError> {
-    let mut out = String::new();
-    let stmts = &block.stmts;
+    (|| -> Result<String, TranspileError> {
+        let mut out = String::new();
+        let stmts = &block.stmts;
 
-    for (i, stmt) in stmts.iter().enumerate() {
-        let is_last = i == stmts.len() - 1;
+        for (i, stmt) in stmts.iter().enumerate() {
+            let is_last = i == stmts.len() - 1;
 
-        match stmt {
-            syn::Stmt::Local(local) => {
-                let (name, annotated_ty) = extract_local_binding(&local.pat, registry, aliases)?;
-                let init_expr = local
-                    .init
-                    .as_ref()
-                    .ok_or(TranspileError::UnsupportedSyntax("let without initializer"))?
-                    .expr
-                    .as_ref();
+            match stmt {
+                syn::Stmt::Local(local) => {
+                    let (name, annotated_ty) = extract_local_binding(&local.pat, registry, aliases)?;
+                    let init_expr = local
+                        .init
+                        .as_ref()
+                        .ok_or(TranspileError::UnsupportedSyntax("let without initializer").with_span(local))?
+                        .expr
+                        .as_ref();
 
-                if let syn::Expr::If(if_expr) = init_expr {
-                    let inferred_ty =
-                        infer_block_tail_type(&if_expr.then_branch, env, registry, func_registry)?;
-                    let ty = annotated_ty.unwrap_or(inferred_ty);
-                    env.insert(name.clone(), ty.clone());
-                    out.push_str(&format!("{};\n", ty.render_decl(&name)));
-                    out.push_str(&generate_if(
-                        if_expr,
-                        Tail::Assign(&name.clone()),
-                        env,
-                        registry,
-                        func_registry,
-                        aliases,
-                        temp_counter,
-                    )?);
-                } else if let syn::Expr::Match(match_expr) = init_expr {
-                    let inferred_ty =
-                        infer_match_arm_type(match_expr, env, registry, func_registry)?;
-                    let ty = annotated_ty.unwrap_or(inferred_ty);
-                    env.insert(name.clone(), ty.clone());
-                    out.push_str(&format!("{};\n", ty.render_decl(&name)));
-                    let assign_name = name.clone();
-                    out.push_str(&generate_match(
-                        match_expr,
-                        Tail::Assign(&assign_name),
-                        env,
-                        registry,
-                        func_registry,
-                        aliases,
-                        temp_counter,
-                    )?);
-                } else {
-                    let inferred_ty = infer_expr_type(init_expr, env, registry, func_registry)?;
-                    let ty = annotated_ty.unwrap_or(inferred_ty);
-                    env.insert(name.clone(), ty.clone());
-                    if matches!(ty, GlslType::Array(_, _)) {
+                    if let syn::Expr::If(if_expr) = init_expr {
+                        let inferred_ty =
+                            infer_block_tail_type(&if_expr.then_branch, env, registry, func_registry)?;
+                        let ty = annotated_ty.unwrap_or(inferred_ty);
+                        env.insert(name.clone(), ty.clone());
                         out.push_str(&format!("{};\n", ty.render_decl(&name)));
-                        out.push_str(&emit_expr_into_target(
-                            &name,
-                            &ty,
-                            init_expr,
+                        out.push_str(&generate_if(
+                            if_expr,
+                            Tail::Assign(&name.clone()),
+                            env,
+                            registry,
+                            func_registry,
+                            aliases,
+                            temp_counter,
+                        )?);
+                    } else if let syn::Expr::Match(match_expr) = init_expr {
+                        let inferred_ty =
+                            infer_match_arm_type(match_expr, env, registry, func_registry)?;
+                        let ty = annotated_ty.unwrap_or(inferred_ty);
+                        env.insert(name.clone(), ty.clone());
+                        out.push_str(&format!("{};\n", ty.render_decl(&name)));
+                        let assign_name = name.clone();
+                        out.push_str(&generate_match(
+                            match_expr,
+                            Tail::Assign(&assign_name),
+                            env,
+                            registry,
+                            func_registry,
+                            aliases,
+                            temp_counter,
+                        )?);
+                    } else {
+                        let inferred_ty = infer_expr_type(init_expr, env, registry, func_registry)?;
+                        let ty = annotated_ty.unwrap_or(inferred_ty);
+                        env.insert(name.clone(), ty.clone());
+                        if matches!(ty, GlslType::Array(_, _)) {
+                            out.push_str(&format!("{};\n", ty.render_decl(&name)));
+                            out.push_str(&emit_expr_into_target(
+                                &name,
+                                &ty,
+                                init_expr,
+                                env,
+                                registry,
+                                func_registry,
+                                temp_counter,
+                            )?);
+                        } else {
+                            let (expr_str, expr_ty) =
+                                generate_expr(init_expr, env, registry, func_registry)?;
+                            let expr_str = coerce_expression_to_type(expr_str, &expr_ty, &ty)?;
+                            out.push_str(&format!("{} = {expr_str};\n", ty.render_decl(&name)));
+                        }
+                    }
+                }
+
+                syn::Stmt::Expr(expr, semi) => {
+                    if let syn::Expr::If(if_expr) = expr {
+                        let if_tail = if is_last && semi.is_none() {
+                            tail
+                        } else {
+                            Tail::Discard
+                        };
+                        out.push_str(&generate_if(
+                            if_expr,
+                            if_tail,
+                            env,
+                            registry,
+                            func_registry,
+                            aliases,
+                            temp_counter,
+                        )?);
+                    } else if let syn::Expr::ForLoop(for_loop) = expr {
+                        out.push_str(&generate_for(
+                            for_loop,
+                            env,
+                            registry,
+                            func_registry,
+                            aliases,
+                            temp_counter,
+                        )?);
+                    } else if let syn::Expr::While(while_loop) = expr {
+                        out.push_str(&generate_while(
+                            while_loop,
+                            env,
+                            registry,
+                            func_registry,
+                            aliases,
+                            temp_counter,
+                        )?);
+                    } else if let syn::Expr::Break(br) = expr {
+                        if br.label.is_some() {
+                            return Err(TranspileError::UnsupportedSyntax("labeled break").with_span(br));
+                        }
+                        if br.expr.is_some() {
+                            return Err(TranspileError::UnsupportedSyntax("break with value").with_span(br));
+                        }
+                        out.push_str("break;\n");
+                    } else if let syn::Expr::Continue(cont) = expr {
+                        if cont.label.is_some() {
+                            return Err(TranspileError::UnsupportedSyntax("labeled continue").with_span(cont));
+                        }
+                        out.push_str("continue;\n");
+                    } else if let syn::Expr::Loop(loop_expr) = expr {
+                        let mut loop_env = env.clone();
+                        let body = generate_block(
+                            &loop_expr.body,
+                            &mut loop_env,
+                            registry,
+                            func_registry,
+                            aliases,
+                            temp_counter,
+                            Tail::Discard,
+                        )?;
+                        out.push_str(&format!("while (true) {{\n{}}}\n", indent_block(&body)));
+                    } else if let syn::Expr::Match(match_expr) = expr {
+                        let match_tail = if is_last && semi.is_none() {
+                            tail
+                        } else {
+                            Tail::Discard
+                        };
+                        out.push_str(&generate_match(
+                            match_expr,
+                            match_tail,
+                            env,
+                            registry,
+                            func_registry,
+                            aliases,
+                            temp_counter,
+                        )?);
+                    } else if is_last && semi.is_none() {
+                        out.push_str(&generate_tail_expr(
+                            expr,
+                            tail,
                             env,
                             registry,
                             func_registry,
                             temp_counter,
                         )?);
                     } else {
-                        let (expr_str, expr_ty) =
-                            generate_expr(init_expr, env, registry, func_registry)?;
-                        let expr_str = coerce_expression_to_type(expr_str, &expr_ty, &ty)?;
-                        out.push_str(&format!("{} = {expr_str};\n", ty.render_decl(&name)));
+                        out.push_str(&generate_statement_expr(
+                            expr,
+                            env,
+                            registry,
+                            func_registry,
+                            temp_counter,
+                        )?);
                     }
                 }
-            }
 
-            syn::Stmt::Expr(expr, semi) => {
-                if let syn::Expr::If(if_expr) = expr {
-                    let if_tail = if is_last && semi.is_none() {
-                        tail
-                    } else {
-                        Tail::Discard
-                    };
-                    out.push_str(&generate_if(
-                        if_expr,
-                        if_tail,
-                        env,
-                        registry,
-                        func_registry,
-                        aliases,
-                        temp_counter,
-                    )?);
-                } else if let syn::Expr::ForLoop(for_loop) = expr {
-                    out.push_str(&generate_for(
-                        for_loop,
-                        env,
-                        registry,
-                        func_registry,
-                        aliases,
-                        temp_counter,
-                    )?);
-                } else if let syn::Expr::While(while_loop) = expr {
-                    out.push_str(&generate_while(
-                        while_loop,
-                        env,
-                        registry,
-                        func_registry,
-                        aliases,
-                        temp_counter,
-                    )?);
-                } else if let syn::Expr::Break(br) = expr {
-                    if br.label.is_some() {
-                        return Err(TranspileError::UnsupportedSyntax("labeled break"));
-                    }
-                    if br.expr.is_some() {
-                        return Err(TranspileError::UnsupportedSyntax("break with value"));
-                    }
-                    out.push_str("break;\n");
-                } else if let syn::Expr::Continue(cont) = expr {
-                    if cont.label.is_some() {
-                        return Err(TranspileError::UnsupportedSyntax("labeled continue"));
-                    }
-                    out.push_str("continue;\n");
-                } else if let syn::Expr::Loop(loop_expr) = expr {
-                    let mut loop_env = env.clone();
-                    let body = generate_block(
-                        &loop_expr.body,
-                        &mut loop_env,
-                        registry,
-                        func_registry,
-                        aliases,
-                        temp_counter,
-                        Tail::Discard,
-                    )?;
-                    out.push_str(&format!("while (true) {{\n{}}}\n", indent_block(&body)));
-                } else if let syn::Expr::Match(match_expr) = expr {
-                    let match_tail = if is_last && semi.is_none() {
-                        tail
-                    } else {
-                        Tail::Discard
-                    };
-                    out.push_str(&generate_match(
-                        match_expr,
-                        match_tail,
-                        env,
-                        registry,
-                        func_registry,
-                        aliases,
-                        temp_counter,
-                    )?);
-                } else if is_last && semi.is_none() {
-                    out.push_str(&generate_tail_expr(
-                        expr,
-                        tail,
-                        env,
-                        registry,
-                        func_registry,
-                        temp_counter,
-                    )?);
-                } else {
-                    out.push_str(&generate_statement_expr(
-                        expr,
-                        env,
-                        registry,
-                        func_registry,
-                        temp_counter,
-                    )?);
-                }
+                _ => return Err(TranspileError::UnsupportedSyntax("statement kind").with_span(stmt)),
             }
-
-            _ => return Err(TranspileError::UnsupportedSyntax("statement kind")),
         }
-    }
 
-    Ok(out)
+        Ok(out)
+    })()
+    .map_err(|e: TranspileError| e.with_span(block))
 }
 
 fn expect_integer(ty: &GlslType, context: &'static str) -> Result<(), TranspileError> {
@@ -202,15 +205,16 @@ pub(super) fn generate_for(
     aliases: &TypeAliasMap,
     temp_counter: &mut usize,
 ) -> Result<String, TranspileError> {
-    let loop_var = extract_ident(&for_loop.pat)?;
-    let range = match for_loop.expr.as_ref() {
-        syn::Expr::Range(range) => range,
-        _ => {
-            return Err(TranspileError::UnsupportedSyntax(
-                "for loop iterable must be a range",
-            ));
-        }
-    };
+    (|| -> Result<String, TranspileError> {
+        let loop_var = extract_ident(&for_loop.pat)?;
+        let range = match for_loop.expr.as_ref() {
+            syn::Expr::Range(range) => range,
+            _ => {
+                return Err(TranspileError::UnsupportedSyntax(
+                    "for loop iterable must be a range",
+                ));
+            }
+        };
 
     let start_expr = range
         .start
@@ -254,11 +258,13 @@ pub(super) fn generate_for(
         Tail::Discard,
     )?;
 
-    Ok(format!(
-        "for ({} {loop_var} = {start_str}; {loop_var} {cond_op} {end_str}; {loop_var}++) {{\n{}}}\n",
-        loop_ty.to_glsl(),
-        indent_block(&body)
-    ))
+        Ok(format!(
+            "for ({} {loop_var} = {start_str}; {loop_var} {cond_op} {end_str}; {loop_var}++) {{\n{}}}\n",
+            loop_ty.to_glsl(),
+            indent_block(&body)
+        ))
+    })()
+    .map_err(|e: TranspileError| e.with_span(for_loop))
 }
 
 pub(super) fn generate_while(
@@ -269,21 +275,24 @@ pub(super) fn generate_while(
     aliases: &TypeAliasMap,
     temp_counter: &mut usize,
 ) -> Result<String, TranspileError> {
-    let (cond_str, _) = generate_expr(&while_loop.cond, env, registry, func_registry)?;
-    let mut loop_env = env.clone();
-    let body = generate_block(
-        &while_loop.body,
-        &mut loop_env,
-        registry,
-        func_registry,
-        aliases,
-        temp_counter,
-        Tail::Discard,
-    )?;
-    Ok(format!(
-        "while ({cond_str}) {{\n{}}}\n",
-        indent_block(&body)
-    ))
+    (|| -> Result<String, TranspileError> {
+        let (cond_str, _) = generate_expr(&while_loop.cond, env, registry, func_registry)?;
+        let mut loop_env = env.clone();
+        let body = generate_block(
+            &while_loop.body,
+            &mut loop_env,
+            registry,
+            func_registry,
+            aliases,
+            temp_counter,
+            Tail::Discard,
+        )?;
+        Ok(format!(
+            "while ({cond_str}) {{\n{}}}\n",
+            indent_block(&body)
+        ))
+    })()
+    .map_err(|e: TranspileError| e.with_span(while_loop))
 }
 
 pub(super) fn infer_block_tail_type(
@@ -292,17 +301,20 @@ pub(super) fn infer_block_tail_type(
     registry: &StructRegistry,
     func_registry: &FuncRegistry,
 ) -> Result<GlslType, TranspileError> {
-    let tail = block
-        .stmts
-        .iter()
-        .last()
-        .ok_or(TranspileError::UnsupportedSyntax("empty if branch"))?;
-    match tail {
-        syn::Stmt::Expr(expr, None) => infer_expr_type(expr, env, registry, func_registry),
-        _ => Err(TranspileError::UnsupportedSyntax(
-            "if expression branch must end with an expression",
-        )),
-    }
+    (|| -> Result<GlslType, TranspileError> {
+        let tail = block
+            .stmts
+            .iter()
+            .last()
+            .ok_or(TranspileError::UnsupportedSyntax("empty if branch"))?;
+        match tail {
+            syn::Stmt::Expr(expr, None) => infer_expr_type(expr, env, registry, func_registry),
+            _ => Err(TranspileError::UnsupportedSyntax(
+                "if expression branch must end with an expression",
+            )),
+        }
+    })()
+    .map_err(|e: TranspileError| e.with_span(block))
 }
 
 pub(super) fn generate_if(
@@ -314,54 +326,57 @@ pub(super) fn generate_if(
     aliases: &TypeAliasMap,
     temp_counter: &mut usize,
 ) -> Result<String, TranspileError> {
-    let (cond_str, _) = generate_expr(&if_expr.cond, env, registry, func_registry)?;
-    let then_body = generate_block(
-        &if_expr.then_branch,
-        env,
-        registry,
-        func_registry,
-        aliases,
-        temp_counter,
-        tail,
-    )?;
+    (|| -> Result<String, TranspileError> {
+        let (cond_str, _) = generate_expr(&if_expr.cond, env, registry, func_registry)?;
+        let then_body = generate_block(
+            &if_expr.then_branch,
+            env,
+            registry,
+            func_registry,
+            aliases,
+            temp_counter,
+            tail,
+        )?;
 
-    let else_str = match &if_expr.else_branch {
-        None => String::new(),
-        Some((_, else_expr)) => match else_expr.as_ref() {
-            syn::Expr::Block(b) => {
-                let body = generate_block(
-                    &b.block,
-                    env,
-                    registry,
-                    func_registry,
-                    aliases,
-                    temp_counter,
-                    tail,
-                )?;
-                format!(" else {{\n{}}}", indent_block(&body))
-            }
-            syn::Expr::If(nested) => {
-                format!(
-                    " else {}",
-                    generate_if(
-                        nested,
-                        tail,
+        let else_str = match &if_expr.else_branch {
+            None => String::new(),
+            Some((_, else_expr)) => match else_expr.as_ref() {
+                syn::Expr::Block(b) => {
+                    let body = generate_block(
+                        &b.block,
                         env,
                         registry,
                         func_registry,
                         aliases,
                         temp_counter,
-                    )?
-                )
-            }
-            _ => return Err(TranspileError::UnsupportedSyntax("else branch form")),
-        },
-    };
+                        tail,
+                    )?;
+                    format!(" else {{\n{}}}", indent_block(&body))
+                }
+                syn::Expr::If(nested) => {
+                    format!(
+                        " else {}",
+                        generate_if(
+                            nested,
+                            tail,
+                            env,
+                            registry,
+                            func_registry,
+                            aliases,
+                            temp_counter,
+                        )?
+                    )
+                }
+                _ => return Err(TranspileError::UnsupportedSyntax("else branch form")),
+            },
+        };
 
-    Ok(format!(
-        "if ({cond_str}) {{\n{}}}{else_str}\n",
-        indent_block(&then_body)
-    ))
+        Ok(format!(
+            "if ({cond_str}) {{\n{}}}{else_str}\n",
+            indent_block(&then_body)
+        ))
+    })()
+    .map_err(|e: TranspileError| e.with_span(if_expr))
 }
 
 fn extract_local_binding(
@@ -369,14 +384,16 @@ fn extract_local_binding(
     registry: &StructRegistry,
     aliases: &TypeAliasMap,
 ) -> Result<(String, Option<GlslType>), TranspileError> {
-    match pat {
+    let result = match pat {
         syn::Pat::Ident(ident) => Ok((ident.ident.to_string(), None)),
         syn::Pat::Type(typed) => Ok((
             extract_ident(&typed.pat)?,
             Some(parse_type(&typed.ty, registry, aliases)?),
         )),
         _ => Err(TranspileError::UnsupportedSyntax("non-ident pattern")),
-    }
+    };
+
+    result.map_err(|e: TranspileError| e.with_span(pat))
 }
 
 fn generate_statement_expr(
@@ -386,7 +403,7 @@ fn generate_statement_expr(
     func_registry: &FuncRegistry,
     temp_counter: &mut usize,
 ) -> Result<String, TranspileError> {
-    match expr {
+    let result = match expr {
         syn::Expr::Assign(assign) => {
             let lhs_ty = infer_expr_type(&assign.left, env, registry, func_registry)?;
             if matches!(lhs_ty, GlslType::Array(_, _)) {
@@ -452,7 +469,9 @@ fn generate_statement_expr(
             let (expr_str, _) = generate_expr(expr, env, registry, func_registry)?;
             Ok(format!("{expr_str};\n"))
         }
-    }
+    };
+
+    result.map_err(|e: TranspileError| e.with_span(expr))
 }
 
 fn generate_tail_expr(
@@ -463,8 +482,9 @@ fn generate_tail_expr(
     func_registry: &FuncRegistry,
     temp_counter: &mut usize,
 ) -> Result<String, TranspileError> {
-    let expr_ty = infer_expr_type(expr, env, registry, func_registry)?;
-    match tail {
+    let result = (|| -> Result<String, TranspileError> {
+        let expr_ty = infer_expr_type(expr, env, registry, func_registry)?;
+        match tail {
         Tail::Return(_) if matches!(expr_ty, GlslType::Array(_, _)) => {
             let temp_name = next_temp_name(temp_counter);
             let mut out = format!("{};\n", expr_ty.render_decl(&temp_name));
@@ -509,7 +529,10 @@ fn generate_tail_expr(
             let (expr_str, _) = generate_expr(expr, env, registry, func_registry)?;
             Ok(format!("{expr_str};\n"))
         }
-    }
+        }
+    })();
+
+    result.map_err(|e: TranspileError| e.with_span(expr))
 }
 
 fn emit_expr_into_target(
@@ -648,7 +671,7 @@ fn render_indexed_expr(
     registry: &StructRegistry,
     func_registry: &FuncRegistry,
 ) -> Result<(String, GlslType), TranspileError> {
-    match expr {
+    let result = match expr {
         syn::Expr::Paren(p) => {
             let (inner, ty) = render_indexed_expr(&p.expr, indices, env, registry, func_registry)?;
             Ok((format!("({inner})"), ty))
@@ -679,7 +702,9 @@ fn render_indexed_expr(
                 descend_type(expr_ty, indices.len())?,
             ))
         }
-    }
+    };
+
+    result.map_err(|e: TranspileError| e.with_span(expr))
 }
 
 fn render_indexed_operand(
@@ -689,13 +714,16 @@ fn render_indexed_operand(
     registry: &StructRegistry,
     func_registry: &FuncRegistry,
 ) -> Result<(String, GlslType), TranspileError> {
-    let expr_ty = infer_expr_type(expr, env, registry, func_registry)?;
-    if matches!(expr_ty, GlslType::Array(_, _)) {
-        render_indexed_expr(expr, indices, env, registry, func_registry)
-    } else {
-        let (expr_str, ty) = generate_expr(expr, env, registry, func_registry)?;
-        Ok((expr_str, ty))
-    }
+    (|| -> Result<(String, GlslType), TranspileError> {
+        let expr_ty = infer_expr_type(expr, env, registry, func_registry)?;
+        if matches!(expr_ty, GlslType::Array(_, _)) {
+            render_indexed_expr(expr, indices, env, registry, func_registry)
+        } else {
+            let (expr_str, ty) = generate_expr(expr, env, registry, func_registry)?;
+            Ok((expr_str, ty))
+        }
+    })()
+    .map_err(|e: TranspileError| e.with_span(expr))
 }
 
 fn descend_type(mut ty: GlslType, depth: usize) -> Result<GlslType, TranspileError> {
@@ -769,12 +797,13 @@ pub(super) fn generate_match(
     aliases: &TypeAliasMap,
     temp_counter: &mut usize,
 ) -> Result<String, TranspileError> {
-    let (cond_str, cond_ty) = generate_expr(&match_expr.expr, env, registry, func_registry)?;
-    if !cond_ty.is_integer() {
-        return Err(TranspileError::UnsupportedSyntax(
-            "match expression requires an integer discriminant for GLSL switch",
-        ));
-    }
+    (|| -> Result<String, TranspileError> {
+        let (cond_str, cond_ty) = generate_expr(&match_expr.expr, env, registry, func_registry)?;
+        if !cond_ty.is_integer() {
+            return Err(TranspileError::UnsupportedSyntax(
+                "match expression requires an integer discriminant for GLSL switch",
+            ));
+        }
 
     let mut arms_out = String::new();
     for arm in &match_expr.arms {
@@ -815,14 +844,16 @@ pub(super) fn generate_match(
         }
     }
 
-    Ok(format!(
-        "switch ({cond_str}) {{\n{}}}\n",
-        indent_block(&arms_out)
-    ))
+        Ok(format!(
+            "switch ({cond_str}) {{\n{}}}\n",
+            indent_block(&arms_out)
+        ))
+    })()
+    .map_err(|e: TranspileError| e.with_span(match_expr))
 }
 
 fn match_pattern_to_case_label(pat: &syn::Pat) -> Result<String, TranspileError> {
-    match pat {
+    let result = match pat {
         syn::Pat::Lit(expr_lit) => match &expr_lit.lit {
             syn::Lit::Int(i) => Ok(format!("case {}:", i.base10_digits())),
             _ => Err(TranspileError::UnsupportedSyntax(
@@ -833,7 +864,9 @@ fn match_pattern_to_case_label(pat: &syn::Pat) -> Result<String, TranspileError>
         _ => Err(TranspileError::UnsupportedSyntax(
             "only integer literal patterns and _ are supported in match",
         )),
-    }
+    };
+
+    result.map_err(|e: TranspileError| e.with_span(pat))
 }
 
 fn infer_match_arm_type(
@@ -842,14 +875,17 @@ fn infer_match_arm_type(
     registry: &StructRegistry,
     func_registry: &FuncRegistry,
 ) -> Result<GlslType, TranspileError> {
-    let first_arm = match_expr
-        .arms
-        .first()
-        .ok_or(TranspileError::UnsupportedSyntax(
-            "match must have at least one arm",
-        ))?;
-    match first_arm.body.as_ref() {
-        syn::Expr::Block(b) => infer_block_tail_type(&b.block, env, registry, func_registry),
-        expr => infer_expr_type(expr, env, registry, func_registry),
-    }
+    (|| -> Result<GlslType, TranspileError> {
+        let first_arm = match_expr
+            .arms
+            .first()
+            .ok_or(TranspileError::UnsupportedSyntax(
+                "match must have at least one arm",
+            ))?;
+        match first_arm.body.as_ref() {
+            syn::Expr::Block(b) => infer_block_tail_type(&b.block, env, registry, func_registry),
+            expr => infer_expr_type(expr, env, registry, func_registry),
+        }
+    })()
+    .map_err(|e: TranspileError| e.with_span(match_expr))
 }

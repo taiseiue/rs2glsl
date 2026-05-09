@@ -61,12 +61,16 @@ fn parse_builtin_attr(attrs: &[syn::Attribute]) -> Result<Option<String>, Transp
                     TranspileError::UnsupportedSyntax(
                         "#[builtin] requires a GLSL name string: #[builtin(\"iResolution\")]",
                     )
+                    .with_span(attr)
                 })?
                 .value();
             if !is_valid_builtin_name(&name) {
-                return Err(TranspileError::UnsupportedSyntax(
-                    "#[builtin] GLSL names must be dot-separated C identifiers",
-                ));
+                return Err(
+                    TranspileError::UnsupportedSyntax(
+                        "#[builtin] GLSL names must be dot-separated C identifiers",
+                    )
+                    .with_span(attr),
+                );
             }
             builtin = Some(name);
         }
@@ -179,9 +183,10 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
                 global_env.insert(rust_name, inner_ty);
             } else if attrs.out {
                 if matches!(s.mutability, syn::StaticMutability::None) {
-                    return Err(TranspileError::UnsupportedSyntax(
-                        "#[out] requires `static mut`",
-                    ));
+                    return Err(
+                        TranspileError::UnsupportedSyntax("#[out] requires `static mut`")
+                            .with_span(s),
+                    );
                 }
                 outputs.push(format!("out {};\n", inner_ty.render_decl(&rust_name)));
                 global_env.insert(rust_name, inner_ty);
@@ -202,7 +207,7 @@ pub fn generate(file: &File) -> Result<String, TranspileError> {
         if let Item::Const(c) = node {
             let name = c.ident.to_string();
             if global_env.contains_key(&name) {
-                return Err(TranspileError::DuplicateConst(name));
+                return Err(TranspileError::DuplicateConst(name).with_span(c));
             }
             let (glsl, ty) =
                 item::generate_const(c, &global_env, &registry, &aliases, &func_registry)?;
