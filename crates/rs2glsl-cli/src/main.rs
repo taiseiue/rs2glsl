@@ -1,7 +1,7 @@
 use std::{env, process};
 
 fn main() {
-    let paths = env::args().skip(1).collect::<Vec<_>>();
+    let paths = collect_paths(env::args());
     if paths.is_empty() {
         eprintln!("usage: cargo-rs2glsl <path> [path ...]");
         process::exit(1);
@@ -27,5 +27,53 @@ fn main() {
             }
             process::exit(1);
         }
+    }
+}
+
+fn collect_paths(args: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut args = args.into_iter().skip(1).peekable();
+    if args.peek().is_some_and(|arg| arg == "rs2glsl") {
+        args.next();
+    }
+    args.collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_paths;
+
+    #[test]
+    fn collect_paths_for_direct_execution() {
+        let args = vec![
+            "cargo-rs2glsl".to_owned(),
+            "examples/basic.rs".to_owned(),
+            "examples/adapters/shadertoy.rs".to_owned(),
+        ];
+
+        assert_eq!(
+            collect_paths(args),
+            vec![
+                "examples/basic.rs".to_owned(),
+                "examples/adapters/shadertoy.rs".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn collect_paths_for_cargo_subcommand() {
+        let args = vec![
+            "cargo-rs2glsl".to_owned(),
+            "rs2glsl".to_owned(),
+            "examples/basic.rs".to_owned(),
+            "examples/adapters/shadertoy.rs".to_owned(),
+        ];
+
+        assert_eq!(
+            collect_paths(args),
+            vec![
+                "examples/basic.rs".to_owned(),
+                "examples/adapters/shadertoy.rs".to_owned(),
+            ]
+        );
     }
 }
